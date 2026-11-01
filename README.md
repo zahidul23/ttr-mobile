@@ -1,5 +1,7 @@
 # TTR Mobile
 
+[![Latest release](https://img.shields.io/github/v/release/zahidul23/ttr-mobile?label=download&color=blue)](https://github.com/zahidul23/ttr-mobile/releases/latest)
+
 An unofficial Android app for playing [Toontown Rewritten](https://www.toontownrewritten.com) on a phone. It runs
 TTR's unedited Windows game client through Wine and FEX-Emu, with touch controls and a custom launcher with no complex setup required.
 
@@ -19,6 +21,12 @@ team.
 
 Needs Android 10 or newer on a 64-bit ARM phone. The first start downloads the Windows runtime
 and the game.
+
+## Download
+
+Get the APK from the [latest release](https://github.com/zahidul23/ttr-mobile/releases/latest), open it on your
+phone (allow installs when Android asks), then sign in with your TTR account. New versions install over the old
+one and keep your saved accounts.
 
 ## Screenshots
 
