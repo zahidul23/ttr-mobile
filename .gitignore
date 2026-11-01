@@ -1,0 +1,11 @@
+# Downloaded toolchain and sources, build output, built APKs
+/.tools/
+/build/
+/dist/
+/diagnostics/
+__pycache__/
+*.pyc
+# Signing keys never belong in the repository
+*.jks
+*.p12
+*.keystore

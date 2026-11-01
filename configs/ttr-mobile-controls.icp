@@ -1,0 +1,105 @@
+{
+  "id": 412023,
+  "name": "Toontown Rewritten Mobile",
+  "description": "TTR Mobile layout: joystick, Jump, Throw, Map, Gags, Camera. Tasks needs the End key, which BannerHub cannot bind.",
+  "gameId": "",
+  "cursorSpeed": 1,
+  "elements": [
+    {
+      "type": "STICK",
+      "shape": "CIRCLE",
+      "bindings": [
+        "KEY_UP",
+        "KEY_RIGHT",
+        "KEY_DOWN",
+        "KEY_LEFT"
+      ],
+      "scale": 1.2,
+      "x": 0.089,
+      "y": 0.8,
+      "toggleSwitch": false,
+      "text": "Move",
+      "iconId": 0
+    },
+    {
+      "type": "BUTTON",
+      "shape": "CIRCLE",
+      "bindings": [
+        "KEY_CTRL_L",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "scale": 1.9,
+      "x": 0.908,
+      "y": 0.761,
+      "toggleSwitch": false,
+      "text": "Jump",
+      "iconId": 0
+    },
+    {
+      "type": "BUTTON",
+      "shape": "CIRCLE",
+      "bindings": [
+        "KEY_DEL",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "scale": 1.6,
+      "x": 0.798,
+      "y": 0.866,
+      "toggleSwitch": false,
+      "text": "Throw",
+      "iconId": 0
+    },
+    {
+      "type": "BUTTON",
+      "shape": "CIRCLE",
+      "bindings": [
+        "KEY_ALT_L",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "scale": 1.0,
+      "x": 0.432,
+      "y": 0.9,
+      "toggleSwitch": false,
+      "text": "Map",
+      "iconId": 0
+    },
+    {
+      "type": "BUTTON",
+      "shape": "CIRCLE",
+      "bindings": [
+        "KEY_HOME",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "scale": 1.0,
+      "x": 0.5,
+      "y": 0.9,
+      "toggleSwitch": false,
+      "text": "Gags",
+      "iconId": 0
+    },
+    {
+      "type": "BUTTON",
+      "shape": "CIRCLE",
+      "bindings": [
+        "KEY_TAB",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "scale": 1.0,
+      "x": 0.568,
+      "y": 0.9,
+      "toggleSwitch": false,
+      "text": "Cam",
+      "iconId": 0
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "git": {
+    "termux-x11-source": {
+      "url": "https://github.com/termux/termux-x11.git",
+      "commit": "7e5f5c5c9226e2cdab392b2efba91bc4bd86463e",
+      "license": "GPL-3.0"
+    },
+    "xkeyboard-config-source": {
+      "url": "https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config.git",
+      "commit": "2ec770a0085bf776de749e185ca40e50213fb21f",
+      "license": "MIT/X11"
+    },
+    "libxcb-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/lib/libxcb.git",
+      "commit": "d4e07bab5729c7d7cc3d2b95568cd9a661a53c4f",
+      "license": "MIT/X11"
+    },
+    "xcbproto-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/proto/xcbproto.git",
+      "commit": "cf7e2581b613802f2f8ec2a4b50a6a20aad4bf52",
+      "license": "MIT/X11"
+    },
+    "libxext-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/lib/libxext.git",
+      "commit": "508f8adca2540ff8926ac8456cb1c553a8caae76",
+      "license": "MIT/X11"
+    },
+    "gl4es-source-host": {
+      "url": "https://github.com/ptitSeb/gl4es.git",
+      "commit": "2037865590d410bcd7b8d1f22b841472ed6d39ac",
+      "license": "MIT"
+    },
+    "libxrender-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/lib/libxrender.git",
+      "commit": "46e12ff9e8e4d3f0313a2f097df93dbfdc14f92f",
+      "license": "MIT/X11"
+    },
+    "libxrandr-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/lib/libxrandr.git",
+      "commit": "512bf0b15b5597c721ff8c61083616ca9040fa72",
+      "license": "MIT/X11"
+    },
+    "libxfixes-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/lib/libxfixes.git",
+      "commit": "c1cab28e27dd1c5a81394965248b57e490ccf2ca",
+      "license": "MIT/X11"
+    },
+    "libxcursor-source": {
+      "url": "https://gitlab.freedesktop.org/xorg/lib/libxcursor.git",
+      "commit": "8ae6cf61b18ecddf26f72a07bbfbd1ea9f022c36",
+      "license": "MIT/X11"
+    },
+    "xz-embedded-source": {
+      "url": "https://github.com/tukaani-project/xz-embedded.git",
+      "commit": "ae63ae3a36ed01724674e8f3d750dc47bf125410",
+      "license": "0BSD"
+    },
+    "android-shmem-source": {
+      "url": "https://github.com/termux/libandroid-shmem.git",
+      "commit": "7f0bd7e25dbdd146265aff7c6a890029e374622d",
+      "license": "BSD-3-Clause"
+    }
+  },
+  "archives": {
+    "ndk": {
+      "url": "https://dl.google.com/android/repository/android-ndk-r28c-windows.zip",
+      "file": "android-ndk-r28c-windows.zip",
+      "sha1": "086bba43ff2f5eb0e387b15c8278bb4e0d89ba1d",
+      "into": "android-ndk"
+    },
+    "zstd": {
+      "url": "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz",
+      "file": "zstd-1.5.6.tar.gz",
+      "sha256": "8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1",
+      "into": "zstd-source",
+      "license": "BSD-3-Clause"
+    },
+    "7zr": {
+      "url": "https://github.com/ip7z/7zip/releases/download/25.01/7zr.exe",
+      "file": "7zr.exe",
+      "sha256": "27cbe3d5804ad09e90bbcaa916da0d5c3b0be9462d0e0fb6cb54be5ed9030875"
+    },
+    "7zip": {
+      "url": "https://www.7-zip.org/a/7z2501-x64.exe",
+      "file": "7z2501-x64.exe",
+      "sha256": "78afa2a1c773caf3cf7edf62f857d2a8a5da55fb0fff5da416074c0d28b2b55f",
+      "into": "7zip"
+    },
+    "ttr-installer": {
+      "url": "https://cdn.toontownrewritten.com/launcher/windows/TTRInstaller-v1.5.10.exe",
+      "file": "TTRInstaller-v1.5.10.exe",
+      "sha256": "b99d74165f5f1465ca1747a1aee08b094ccfc315691c33cc6eb53649ea23b4a3",
+      "note": "artwork for the launch screen and icon is extracted from it at build time; it is never run"
+    }
+  }
+}

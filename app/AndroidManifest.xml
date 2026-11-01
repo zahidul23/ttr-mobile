@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="help.toontown.ttrmobile" android:versionCode="18" android:versionName="0.8.1">
+  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <queries>
+    <intent><action android:name="android.support.customtabs.action.CustomTabsService" /></intent>
+    <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
+  </queries>
+  <application android:label="TTR Mobile" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:debuggable="true" android:extractNativeLibs="true" android:usesCleartextTraffic="false" android:supportsRtl="true">
+    <activity android:name="org.ttrmobile.TtrActivity" android:exported="true" android:launchMode="singleTask" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation|touchscreen|screenLayout|smallestScreenSize|density|uiMode|fontScale|fontWeightAdjustment|colorMode|layoutDirection|locale|mcc|mnc|grammaticalGender" android:windowSoftInputMode="adjustResize">
+      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+    </activity>
+    <service android:name="org.ttrmobile.TtrX11Service" android:process=":x11" android:exported="false" />
+  </application>
+</manifest>

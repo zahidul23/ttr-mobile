@@ -1,0 +1,2 @@
+* text=auto eol=lf
+native/bzip2/vendor/** -text
