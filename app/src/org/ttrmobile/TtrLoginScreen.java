@@ -190,6 +190,10 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         readyRelease = text(TtrUpdater.release(activity), 12, MUTED); readyText.addView(readyRelease);
         LinearLayout.LayoutParams readyParams = new LinearLayout.LayoutParams(0, -2, 1); readyParams.leftMargin = dp(12); readyCard.addView(readyText, readyParams);
         add(mainPanel, readyCard, 14);
+        // TTR Mobile's own version and whether a newer release is out (Windows app only: TtrAppUpdate exists there).
+        TextView appVersion = text("", 12, MUTED); appVersion.setGravity(Gravity.CENTER); add(mainPanel, appVersion, 12);
+        try { Class.forName("org.ttrmobile.TtrAppUpdate").getMethod("attach", TextView.class, int.class, int.class).invoke(null, appVersion, MUTED, GOLD); }
+        catch (Exception e) { appVersion.setVisibility(View.GONE); }
 
         // Account page.
         accountPanel = column(); add(card, accountPanel, 18); accountPanel.setVisibility(View.GONE);

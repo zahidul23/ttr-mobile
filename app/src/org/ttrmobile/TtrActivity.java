@@ -222,7 +222,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     @Override public void onBackPressed(){if(ime.isOpen()){closeKeyboard();return;}if(!visible&&login.back())return;new android.app.AlertDialog.Builder(this).setTitle("Close TTR Mobile?").setPositiveButton("Close",(d,w)->finishAndRemoveTask()).setNeutralButton("Diagnostics…",(d,w)->diagnostics()).setNegativeButton("Keep open",null).show();}
     @Override public void onStart(){super.onStart();TtrRuntime.setAudioPaused(this,false);}
     @Override public void onStop(){TtrRuntime.setAudioPaused(this,true);super.onStop();}
-    @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.post(poll);}
+    @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.post(poll);TtrAppUpdate.start(this);}
     @Override public void onPause(){resumed=false;ui.removeCallbacks(poll);gamepad.release();release();login.pause();super.onPause();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);layoutDisplay();login.resize();}
     @Override public void onDestroy(){TtrDevServer.stop(this);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
