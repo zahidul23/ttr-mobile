@@ -22,6 +22,8 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         public int gameHeight(){return display.cursorAreaHeight;}
     });
     private final Set<Integer> pressed=new HashSet<>();
+    /** Screens alive in this process (an Android recreate briefly has two); 0 after a close. */
+    static volatile int alive;
     private final Handler ui=new Handler(Looper.getMainLooper());
     private boolean visible,resumed,cursorMode;
     private String loggedPhase;
@@ -56,6 +58,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     }
     private final Runnable poll=new Runnable(){public void run(){if(!resumed)return;
         String phase=TtrRuntime.phase(TtrActivity.this);if(!phase.equals(loggedPhase)){graphicsCheck(loggedPhase,phase);loggedPhase=phase;TtrDiagnostics.log(TtrActivity.this,"Windows phase: "+phase+(TtrRuntime.lastError!=null?" (error: "+TtrRuntime.lastError+")":""));}
+
         boolean next=TtrRuntime.clientVisible(TtrActivity.this);if(next!=visible){visible=next;if(next)showClient();else{closeKeyboard();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);TtrSafeArea.setFullscreen(TtrActivity.this,safe,controls,false);login.clientClosed();login.view.setVisibility(View.VISIBLE);controls.setVisibility(View.GONE);pointer.setVisibility(View.GONE);gamepad.release();release();}}
         ui.postDelayed(this,250);
     }};
@@ -74,10 +77,11 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     private void graphicsFallback(){
         if(!TtrGraphics.recordStartupFailure(this))return;
         ui.removeCallbacks(graphicsWatch);
-        TtrLauncher.message="The faster graphics didn't work on this phone, so TTR Mobile switched to compatibility graphics. Tap Play to try again.";
+        TtrLauncher.notice("The faster graphics didn't work on this phone, so TTR Mobile switched to compatibility graphics. Tap Play to try again.");
         TtrRuntime.restartForGraphics(this);
     }
-    @Override public void onCreate(Bundle state){super.onCreate(state);TtrDiagnostics.install(this);
+    @Override public void onCreate(Bundle state){super.onCreate(state);TtrDiagnostics.install(this);alive++;
+        try{TtrHttp.userAgent="TTR-Mobile/"+getPackageManager().getPackageInfo(getPackageName(),0).versionName+" (unofficial Android launcher)";}catch(Exception ignored){}
         TtrRuntime.prepareStorage(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         safe=new FrameLayout(this);safe.setBackgroundColor(0xff000000);root=new FrameLayout(this);safe.addView(root,new FrameLayout.LayoutParams(-1,-1));TtrSafeArea.edgeToEdge=true;TtrSafeArea.install(this,safe);
@@ -209,24 +213,30 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     }
     private void closeKeyboard(){ime.hide();}
     private void release(){for(int code:pressed)display.key(code,false);pressed.clear();}
-    /** Share a report, or switch detailed Windows logging (used from the next start) for a problem that needs it. */
-    private void diagnostics(){boolean detailed=TtrRuntime.detailedLogging(this);
-        new android.app.AlertDialog.Builder(this).setTitle("Diagnostics").setItems(new String[]{"Share diagnostics",detailed?"Turn off detailed logging":"Turn on detailed logging (restart TTR Mobile after)"},(d,which)->{
-            if(which==0)TtrDiagnostics.share(this);
-            else{TtrRuntime.setDetailedLogging(this,!detailed);Toast.makeText(this,detailed?"Detailed logging off.":"Detailed logging on. Close and reopen TTR Mobile, reproduce the problem, then share diagnostics.",Toast.LENGTH_LONG).show();}
-        }).show();}
     /** Volume keys keep controlling the phone (game audio plays on the media stream). */
     private static boolean isVolumeKey(int code){return code==KeyEvent.KEYCODE_VOLUME_UP||code==KeyEvent.KEYCODE_VOLUME_DOWN||code==KeyEvent.KEYCODE_VOLUME_MUTE;}
     @Override public boolean onKeyDown(int code,KeyEvent e){if(visible&&code!=KeyEvent.KEYCODE_BACK&&!isVolumeKey(code)){display.key(code,true);return true;}return super.onKeyDown(code,e);}
     @Override public boolean onKeyUp(int code,KeyEvent e){if(visible&&code!=KeyEvent.KEYCODE_BACK&&!isVolumeKey(code)){display.key(code,false);return true;}return super.onKeyUp(code,e);}
-    @Override public void onBackPressed(){if(ime.isOpen()){closeKeyboard();return;}if(!visible&&login.back())return;new android.app.AlertDialog.Builder(this).setTitle("Close TTR Mobile?").setPositiveButton("Close",(d,w)->finishAndRemoveTask()).setNeutralButton("Diagnostics…",(d,w)->diagnostics()).setNegativeButton("Keep open",null).show();}
-    @Override public void onStart(){super.onStart();TtrRuntime.setAudioPaused(this,false);}
-    @Override public void onStop(){TtrRuntime.setAudioPaused(this,true);super.onStop();}
+    /** Back: in the game, back to the launcher (only the game closes) or close the app; on the launcher, close the app. */
+    @Override public void onBackPressed(){if(ime.isOpen()){closeKeyboard();return;}if(!visible&&login.back())return;
+        if(visible){new TtrDialog(this,"Leave the game?","Your toon will log out.")
+            .button("Back to launcher",TtrDialog.PRIMARY,this::closeGame)
+            .button("Close TTR Mobile",TtrDialog.SECONDARY,this::finishAndRemoveTask)
+            .button("Keep playing",TtrDialog.QUIET,null).show();return;}
+        new TtrDialog(this,"Close TTR Mobile?",null)
+            .button("Close",TtrDialog.PRIMARY,this::finishAndRemoveTask)
+            .button("Cancel",TtrDialog.QUIET,null).show();}
+    /** Closes only the game; Windows keeps running, so Play starts it again quickly. */
+    private void closeGame(){release();closeKeyboard();gamepad.release();TtrRuntime.closeGame(this);}
+    @Override public void onStart(){super.onStart();TtrKeepAlive.setBackground(this,false);TtrRuntime.setAudioPaused(this,false);}
+    @Override public void onStop(){TtrRuntime.setAudioPaused(this,true);TtrKeepAlive.setBackground(this,true);super.onStop();}
     @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.post(poll);TtrAppUpdate.start(this);}
     @Override public void onPause(){resumed=false;ui.removeCallbacks(poll);gamepad.release();release();login.pause();super.onPause();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);layoutDisplay();login.resize();}
     @Override public void onDestroy(){TtrDevServer.stop(this);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
         // Only a real close stops Windows; if Android recreates the screen (a system setting changed), the game keeps running.
-        if(isFinishing())TtrRuntime.stop(this);else TtrDiagnostics.log(this,"Screen recreated by Android; Windows keeps running.");
+        // A close also ends the app's process once nothing needs it (a download may finish first).
+        alive--;
+        if(isFinishing()){TtrRuntime.stop(this);TtrKeepAlive.exitWhenIdle(this);}else TtrDiagnostics.log(this,"Screen recreated by Android; Windows keeps running.");
         display.destroy();super.onDestroy();}
 }

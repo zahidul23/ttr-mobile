@@ -23,6 +23,10 @@ public final class TtrRuntime {
     private static TtrActivity activity;
     private static ServiceConnection connection;
     private static volatile boolean bound, preparing, started;
+    /** True while the Windows runtime downloads and installs (closing the app lets it finish first). */
+    static volatile boolean installing;
+    /** Changes on every stop: a start still in progress from before a close must not carry on afterwards. */
+    private static volatile int generation;
     private static volatile java.lang.Process wine, server;
     private static volatile int retries;
 
@@ -38,9 +42,31 @@ public final class TtrRuntime {
         if (lastError != null) return "runtime_failed";
         try {
             File status = status(c);
-            if (status.isFile()) return new org.json.JSONObject(new String(Files.readAllBytes(status.toPath()), StandardCharsets.UTF_8)).optString("phase", "runtime");
+            if (status.isFile()) {
+                String p = new org.json.JSONObject(new String(Files.readAllBytes(status.toPath()), StandardCharsets.UTF_8)).optString("phase", "runtime");
+                if (p.equals("starting_game") || p.equals("client_started")) { String later = loggedPhase(c); if (later != null) return later; }
+                return p;
+            }
         } catch (Exception ignored) { }
         return "runtime";
+    }
+    private static final List<String> AFTER_START = Arrays.asList("client_started", "game", "closing_game", "closed", "window_timeout", "game_start_failed");
+    /**
+     * A launch whose status file stopped updating (once on a Galaxy S23: the game ran, the launcher never showed it):
+     * the helper's own log also records each phase, so the latest one after the start is taken from there.
+     */
+    private static String loggedPhase(Context c) {
+        try (RandomAccessFile log = new RandomAccessFile(new File(TtrDiagnostics.windowsDirectory(c), "bootstrap.log"), "r")) {
+            long start = Math.max(0, log.length() - 4096); byte[] tail = new byte[(int) (log.length() - start)]; log.seek(start); log.readFully(tail);
+            String[] lines = new String(tail, StandardCharsets.UTF_8).split("\n");
+            for (int i = lines.length - 1; i >= 0; i--) {
+                String[] words = lines[i].trim().split(" ");
+                if (words.length < 5) continue;
+                if (words[3].equals("starting_game") || words[3].startsWith("helper_started")) return null; // nothing newer
+                if (AFTER_START.contains(words[3])) return words[3];
+            }
+        } catch (Exception ignored) { }
+        return null;
     }
     // A status file from an earlier process (e.g. before an update) does not mean a session is open.
     public static boolean clientVisible(Context c) { return started && phase(c).equals("game"); }
@@ -70,16 +96,19 @@ public final class TtrRuntime {
         if (started || preparing) { if (started) lastError = null; done.run(); return; }
         preparing = true; lastError = null;
         Context c = a.getApplicationContext(); app = c;
+        final int session = generation;
         worker.execute(() -> {
             try {
                 File dir = directory(c);
                 Files.write(status(c).toPath(), "{\"phase\":\"runtime\",\"code\":0}".getBytes(StandardCharsets.UTF_8));
-                if (!TtrWineRuntime.installed(c)) { lastMessage = "Installing Windows…"; TtrWineRuntime.install(c); }
+                if (!TtrWineRuntime.installed(c)) { lastMessage = "Installing Windows…"; installing = true; try { TtrWineRuntime.install(c); } finally { installing = false; } }
+                if (session != generation) return; // closed meanwhile
                 TtrGraphics.prepare(c);
                 TtrStartupProgress.setup = 100; TtrStartupProgress.setupMessage = null;
                 prepare(c, dir);
-                ui.post(() -> bindDisplay(a, done));
+                ui.post(() -> { if (session == generation) bindDisplay(a, done); });
             } catch (Throwable e) {
+                if (session != generation) return;
                 preparing = false;
                 fail("Windows could not be prepared: " + e.getMessage() + ". Check your connection and storage, then reopen TTR Mobile.");
                 TtrDiagnostics.log(c, "Runtime preparation failed: " + e);
@@ -96,9 +125,10 @@ public final class TtrRuntime {
             ParcelFileDescriptor fd = data.getParcelable("fd");
             if (fd == null) { fail("The display connection is unavailable."); done.run(); return true; }
             if (activity != null) activity.attachDisplay(fd.detachFd());
-            Context c = a.getApplicationContext();
+            Context c = a.getApplicationContext(); final int session = generation;
             worker.execute(() -> {
-                try { startWine(c); started = true; preparing = false; ui.post(done); monitor(c); }
+                if (session != generation) return; // closed before Windows started
+                try { startWine(c); if (session != generation) { killStrayWindows(); return; } started = true; preparing = false; ui.post(done); monitor(c); }
                 catch (Throwable e) { preparing = false; fail("Windows could not start: " + e.getMessage()); TtrDiagnostics.log(c, "Wine start failed: " + e); ui.post(done); }
             });
             return true;
@@ -111,7 +141,8 @@ public final class TtrRuntime {
             }
             public void onServiceDisconnected(ComponentName n) { bound = false; fail("The display stopped. Reopen TTR Mobile to retry."); }
         };
-        if (!a.bindService(new Intent(a, TtrX11Service.class), connection, Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT) /* the display process gets the game's foreground priority, so low memory doesn't kill it first */) { preparing = false; fail("The display could not start."); done.run(); }
+        // Bound from the app (not the screen), so a close from the notification can unbind it too.
+        if (!a.getApplicationContext().bindService(new Intent(a, TtrX11Service.class), connection, Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT) /* the display process gets the game's foreground priority, so low memory doesn't kill it first */) { preparing = false; fail("The display could not start."); done.run(); }
     }
 
     /** Xauthority, keyboard data, library aliases, the bootstrap and its diagnostics path. */
@@ -432,13 +463,34 @@ public final class TtrRuntime {
         } catch (Exception e) { try { if (x != null) x.close(); } catch (IOException ignored) { } x = null; }
     }
 
+    /**
+     * Asks the helper to close the game (it closes the game's window, then ends it if it is still there after 3 s).
+     * Windows stays up and the helper starts again, ready for the next Play.
+     */
+    static void closeGame(Context c) {
+        try {
+            File dir = directory(c), tmp = new File(dir, "close-client.tmp");
+            Files.write(tmp.toPath(), "TTR-CLOSE1\n".getBytes(StandardCharsets.US_ASCII));
+            Files.move(tmp.toPath(), new File(dir, "close-client").toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            log(c, "Game closed from the back button.");
+        } catch (Exception e) { log(c, "Could not ask the game to close (" + e + ")."); }
+    }
+    /**
+     * Ends Windows and everything running in it, the game included, before returning. Ending only the helper and the
+     * server could leave the game process running (still playing sound) until the next start cleared it.
+     */
     public static synchronized void stop(Context c) {
-        started = false; preparing = false;
+        started = false; preparing = false; generation++;
         java.lang.Process w = wine, s = server; wine = null; server = null;
         if (w != null) w.destroy();
-        try { launch(c, environment(c), new File(c.getCacheDir(), "wine.log"), new File(TtrWineRuntime.loader(c).getParentFile(), "wineserver").getAbsolutePath(), "-k"); } catch (Exception ignored) { }
+        // Ask Wine to close its programs while its server is still up; then end whatever is left outright.
+        try {
+            java.lang.Process k = launch(c, environment(c), new File(c.getCacheDir(), "wine.log"), new File(TtrWineRuntime.loader(c).getParentFile(), "wineserver").getAbsolutePath(), "-k");
+            if (!k.waitFor(1500, TimeUnit.MILLISECONDS)) k.destroy();
+        } catch (Exception ignored) { }
         if (s != null) s.destroy();
-        if (connection != null && bound) { try { c.unbindService(connection); } catch (Exception ignored) { } bound = false; }
+        int left = killStrayWindows(); if (left > 0) log(c, "Close: ended " + left + " Windows processes.");
+        if (connection != null && bound) { try { c.getApplicationContext().unbindService(connection); } catch (Exception ignored) { } bound = false; }
         activity = null;
     }
 

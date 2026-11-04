@@ -22,7 +22,7 @@ public final class TtrDiagnostics {
             File file = new File(windowsDirectory(c), "ttr-mobile.log");
             if (file.length() > 1_000_000) file.delete();
             try (Writer w = new OutputStreamWriter(new FileOutputStream(file, true), StandardCharsets.UTF_8)) {
-                w.write(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()) + " " + message + "\n");
+                w.write(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()) + " " + TtrSecrets.redact(message) + "\n");
             }
         } catch (IOException ignored) { }
     }
@@ -45,8 +45,9 @@ public final class TtrDiagnostics {
             try (RandomAccessFile r = new RandomAccessFile(f, "r")) {
                 long start = Math.max(0, r.length() - max); r.seek(start); byte[] b = new byte[(int) (r.length() - start)]; r.readFully(b);
                 StringBuilder out = new StringBuilder();
-                // Never include anything that could be a login secret.
-                for (String line : new String(b, StandardCharsets.UTF_8).split("\n")) {
+                // Never include anything that could be a login secret: lines that name one are dropped, and a known
+                // cookie or token is hidden wherever it appears.
+                for (String line : TtrSecrets.redact(new String(b, StandardCharsets.UTF_8)).split("\n")) {
                     String lower = line.toLowerCase(Locale.US);
                     if (lower.contains("cookie") || lower.contains("token") || lower.contains("password") || lower.contains("gameserver")) continue;
                     // Wine repeats this harmless notice for every program it starts.

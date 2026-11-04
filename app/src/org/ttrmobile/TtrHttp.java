@@ -12,10 +12,8 @@ public final class TtrHttp {
     public static final String LOGIN = "https://www.toontownrewritten.com/api/login?format=json";
     public static final String MANIFEST = "https://cdn.toontownrewritten.com/content/patchmanifest.txt";
     public static final String MIRRORS = "https://cdn.toontownrewritten.com/mirrors.txt";
-    /** Optional platform diagnostic; null keeps the default HTTPS transport. */
-    public static volatile javax.net.ssl.SSLSocketFactory loginSocketFactory;
-    public static volatile boolean loginUsedProxy;
-    public static final java.util.concurrent.atomic.AtomicInteger loginRequests=new java.util.concurrent.atomic.AtomicInteger();
+    /** Set by the app at start-up from its version name. */
+    public static volatile String userAgent = "TTR-Mobile (unofficial Android launcher)";
     private TtrHttp() { }
     public static URL official(String url) throws IOException {
         URL target = new URL(url);
@@ -31,7 +29,7 @@ public final class TtrHttp {
         HttpsURLConnection c = (HttpsURLConnection)official(url).openConnection();
         c.setInstanceFollowRedirects(false);
         c.setConnectTimeout(20000); c.setReadTimeout(30000);
-        c.setRequestProperty("User-Agent", "TTR-Mobile/0.4.1 (unofficial Android launcher)");
+        c.setRequestProperty("User-Agent", userAgent);
         return c;
     }
     public static void checkCancelled() throws InterruptedIOException {
@@ -54,15 +52,12 @@ public final class TtrHttp {
         byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
         HttpsURLConnection c = open(LOGIN);
         c.setUseCaches(false);
-        if(loginSocketFactory!=null)c.setSSLSocketFactory(loginSocketFactory);
         try {
             c.setRequestMethod("POST"); c.setDoOutput(true);
-            loginRequests.incrementAndGet();
             c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
             c.setFixedLengthStreamingMode(bytes.length);
             try (OutputStream out = c.getOutputStream()) { out.write(bytes); }
             int code = c.getResponseCode();
-            loginUsedProxy=c.usingProxy();
             if (code != 200) throw new IOException("The TTR login service is unavailable (HTTP " + code + "). Try again later.");
             try (InputStream in = c.getInputStream()) { return new JSONObject(read(in, 65536)); }
         } finally { java.util.Arrays.fill(bytes, (byte)0); c.disconnect(); }

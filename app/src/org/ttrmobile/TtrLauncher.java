@@ -18,11 +18,15 @@ public final class TtrLauncher {
     public static volatile boolean busy, launchReady, playing;
     public static volatile String selected = "", message = "", challenge;
     public static volatile int challengeId;
+    /** Counts messages, so the launcher screen shows each one once (briefly) instead of keeping the last one up. */
+    public static volatile int messageId;
     private TtrLauncher() { }
     public static synchronized void attach(Listener view) { listener = new WeakReference<>(view); }
     public static synchronized void detach(Listener view) { if (listener.get() == view) listener.clear(); }
     public static void refresh() { ui.post(() -> { Listener view = listener.get(); if (view != null) view.changed(); }); }
-    private static void progress(String text) { message = text; refresh(); }
+    private static void progress(String text) { notice(text); }
+    /** A short status for the launcher screen; it shows once and fades. */
+    public static void notice(String text) { message = text; messageId++; refresh(); }
     public static synchronized boolean consumeLaunch() { if (!launchReady) return false; launchReady = false; return true; }
     public static synchronized void submit(String code) { submitted = code; TtrLauncher.class.notifyAll(); }
     public static synchronized void cancel(Context c) {
@@ -43,7 +47,8 @@ public final class TtrLauncher {
                 progress(play ? "Signing in…" : "Verifying account…");
                 TtrLoginFlow.Session session = TtrLoginFlow.login(account, password, fields -> {
                     JSONObject json = TtrHttp.login(fields); Map<String, String> values = new HashMap<>();
-                    Iterator<String> keys = json.keys(); while (keys.hasNext()) { String key = keys.next(); values.put(key, json.optString(key)); } return values;
+                    Iterator<String> keys = json.keys(); while (keys.hasNext()) { String key = keys.next(); values.put(key, json.optString(key)); }
+                    for (String secret : new String[]{"cookie", "responseToken", "queueToken"}) TtrSecrets.add(values.get(secret)); return values;
                 }, new TtrLoginFlow.Prompts() {
                     public String code(String banner) throws Exception {
                         synchronized (TtrLauncher.class) {

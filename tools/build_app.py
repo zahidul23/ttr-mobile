@@ -15,7 +15,7 @@ from pathlib import Path
 from common import ROOT, TOOLS, NDK_BIN, find, run
 
 BUILD = ROOT / 'build/app'
-VERSION = '0.8.2'
+VERSION = '0.8.3'
 PACKAGE = 'help.toontown.ttrmobile'
 DEV_PACKAGE = PACKAGE + '.dev'
 RELEASE_KEYSTORE = Path(os.environ.get('TTR_RELEASE_KEYSTORE', Path.home() / '.ttr-mobile/release.p12'))

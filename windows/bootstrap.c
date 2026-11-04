@@ -37,9 +37,22 @@ static void status(const char *phase, DWORD code) {
     wchar_t path[32768], temp[32768];
     swprintf(path, 32768, L"%ls\\status.json", diagnostic_folder);
     swprintf(temp, 32768, L"%ls\\status.tmp", diagnostic_folder);
+    char line[160]; snprintf(line, sizeof(line), "{\"phase\":\"%s\",\"code\":%lu}\n", phase, (unsigned long)code);
+    /* The launcher only follows this file, so a phase must never be lost: the replace is retried, and if it keeps
+       failing (seen once on a Galaxy S23, where the launcher then never showed the game) the file is written in place. */
     FILE *f = _wfopen(temp, L"wb");
-    if (f) { fprintf(f, "{\"phase\":\"%s\",\"code\":%lu}\n", phase, (unsigned long)code); fclose(f);
-        MoveFileExW(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH); }
+    if (f) {
+        fputs(line, f); fclose(f);
+        for (int attempt = 0; attempt < 10; attempt++) {
+            if (MoveFileExW(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return;
+            if (attempt == 0) log_event("status_replace_failed", GetLastError());
+            Sleep(20);
+        }
+        DeleteFileW(temp);
+    } else log_event("status_temp_failed", GetLastError());
+    f = _wfopen(path, L"wb");
+    if (f) { fputs(line, f); fclose(f); log_event("status_written_in_place", 0); }
+    else log_event("status_write_failed", GetLastError());
 }
 static int fail(const char *phase, DWORD code) { status(phase, code); return 1; }
 static BOOL start(const wchar_t *exe, const wchar_t *args, const wchar_t *cwd, PROCESS_INFORMATION *pi) {
