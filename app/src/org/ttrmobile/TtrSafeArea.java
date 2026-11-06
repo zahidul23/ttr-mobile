@@ -22,6 +22,8 @@ public final class TtrSafeArea {
      * (TtrLoginScreen), instead of the whole window keeping black gutters.
      */
     public static boolean edgeToEdge;
+    /** In the floating (picture-in-picture) window the game fills it: no gutters. */
+    public static boolean pip;
 
     @SuppressWarnings("deprecation")
     public static void install(Activity activity,View frame) {
@@ -41,6 +43,7 @@ public final class TtrSafeArea {
             int x=open?0:bars[0],y=open?0:bars[1],top=y;
             // Portrait full screen: the game stays below the status bar / camera area; the rest is edge to edge.
             if(fullscreen&&portrait)top=topEdge(insets);
+            if(pip)x=y=top=0;
             if(v.getPaddingLeft()!=x || v.getPaddingTop()!=top || v.getPaddingBottom()!=y)v.setPadding(x,top,x,y);
             if(controls!=null&&controls.getLayoutParams() instanceof ViewGroup.MarginLayoutParams){
                 ViewGroup.MarginLayoutParams p=(ViewGroup.MarginLayoutParams)controls.getLayoutParams();

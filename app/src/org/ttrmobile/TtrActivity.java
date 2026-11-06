@@ -56,10 +56,10 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
             paint.setStyle(android.graphics.Paint.Style.FILL);paint.setColor(0xffffffff);c.drawPath(arrow,paint);
             paint.setStyle(android.graphics.Paint.Style.STROKE);paint.setStrokeWidth(1.4f*d);paint.setColor(0xff1a1a1a);c.drawPath(arrow,paint);}
     }
-    private final Runnable poll=new Runnable(){public void run(){if(!resumed)return;
+    private final Runnable poll=new Runnable(){public void run(){if(!resumed&&!isInPictureInPictureMode())return;
         String phase=TtrRuntime.phase(TtrActivity.this);if(!phase.equals(loggedPhase)){graphicsCheck(loggedPhase,phase);loggedPhase=phase;TtrDiagnostics.log(TtrActivity.this,"Windows phase: "+phase+(TtrRuntime.lastError!=null?" (error: "+TtrRuntime.lastError+")":""));}
 
-        boolean next=TtrRuntime.clientVisible(TtrActivity.this);if(next!=visible){visible=next;if(next)showClient();else{closeKeyboard();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);TtrSafeArea.setFullscreen(TtrActivity.this,safe,controls,false);login.clientClosed();login.view.setVisibility(View.VISIBLE);controls.setVisibility(View.GONE);pointer.setVisibility(View.GONE);gamepad.release();release();}}
+        boolean next=TtrRuntime.clientVisible(TtrActivity.this);if(next!=visible){visible=next;if(next)showClient();else{closeKeyboard();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);TtrSafeArea.setFullscreen(TtrActivity.this,safe,controls,false);login.clientClosed();login.view.setVisibility(View.VISIBLE);controls.setVisibility(View.GONE);pointer.setVisibility(View.GONE);gamepad.release();release();updatePip();}}
         ui.postDelayed(this,250);
     }};
     private long gameShownAt;
@@ -102,7 +102,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     public void attachDisplay(int fd){display.attachFd(fd);layoutDisplay();}
     public void refreshDisplay(){release();closeKeyboard();layoutDisplay();}
     /** In the game the phone keyboard covers the bottom of the screen; nothing moves or resizes. */
-    public void showClient(){getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);TtrSafeArea.setFullscreen(this,safe,controls,true);login.view.setVisibility(View.GONE);controls.setVisibility(View.VISIBLE);showPointer();layoutDisplay();}
+    public void showClient(){getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);TtrSafeArea.setFullscreen(this,safe,controls,true);login.view.setVisibility(View.GONE);controls.setVisibility(isInPictureInPictureMode()?View.GONE:View.VISIBLE);showPointer();layoutDisplay();}
     /** Developer capture of the game surface only; never captures account UI. */
     void captureGame(){
         java.io.File cache=getExternalCacheDir();
@@ -132,7 +132,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         rw=Math.min(rw,rootW);
         TtrViewport.renderWidth=rw;TtrViewport.renderHeight=rh;TtrViewport.rootWidth=rootW;
         FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)display.getLayoutParams();p.height=gh;p.width=(int)Math.round((double)w*rootW/rw);
-        display.cursorAreaWidth=rw;display.cursorAreaHeight=rh;display.setLayoutParams(p);display.resize(rootW,rh);TtrRuntime.resize();}
+        display.cursorAreaWidth=rw;display.cursorAreaHeight=rh;display.setLayoutParams(p);display.resize(rootW,rh);TtrRuntime.resize();updatePip();}
     public void bind(String binding,boolean down){int code;
         switch(binding){case "KEY_UP":code=19;break;case "KEY_DOWN":code=20;break;case "KEY_LEFT":code=21;break;case "KEY_RIGHT":code=22;break;case "KEY_CTRL_L":code=113;break;case "KEY_DEL":code=112;break;case "KEY_HOME":code=122;break;case "KEY_END":code=123;break;case "KEY_ALT_L":code=57;break;case "KEY_TAB":code=61;break;default:return;}
         if(down?pressed.add(code):pressed.remove(code))display.key(code,down);
@@ -167,7 +167,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     private void openGroups(){
         if(groupsOpen)return;
         release();closeKeyboard();
-        groupsOpen=true;
+        groupsOpen=true;updatePip();
         ui.post(launchGroups);
     }
     private final Runnable launchGroups=()->{
@@ -193,7 +193,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         }catch(android.content.ActivityNotFoundException e){groupsClosed();Toast.makeText(this,"No web browser found to open ToonHQ.",Toast.LENGTH_LONG).show();}
     };
     private void groupsClosed(){
-        ui.removeCallbacks(launchGroups);groupsOpen=false;
+        ui.removeCallbacks(launchGroups);groupsOpen=false;updatePip();
         if(groupsReopen){groupsReopen=false;ui.postDelayed(this::openGroups,150);}
     }
     @Override protected void onActivityResult(int request,int result,android.content.Intent data){
@@ -210,6 +210,35 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         if(root.getHeight()>root.getWidth())Toast.makeText(this,"Groups will open on the "+(TtrGroups.right(this)?"right":"left")+" in landscape.",Toast.LENGTH_SHORT).show();
         if(!groupsOpen)ui.postDelayed(this::openGroups,150); // the sheet already reported closing
         else groupsReopen=true;
+    }
+    /**
+     * Home (or switching apps) while the game shows: the game keeps running, with sound, in a small floating window,
+     * like a video. It has the game area's shape, so the game window keeps its size; the touch controls hide until
+     * it is opened again. Closing the floating window is the same as leaving the app before: the toon stays
+     * connected in the background for up to 5 minutes.
+     */
+    private android.app.PictureInPictureParams pipParams(){
+        int w=root.getWidth(),h=TtrViewport.gameHeight(w,root.getHeight());
+        if(w<1||h<1){w=16;h=9;}
+        // Android allows shapes from 1:2.39 to 2.39:1.
+        if(w*100L>h*239L)w=(int)(h*239L/100);else if(h*100L>w*239L)h=(int)(w*239L/100);
+        int[] at=new int[2];root.getLocationInWindow(at);
+        android.app.PictureInPictureParams.Builder b=new android.app.PictureInPictureParams.Builder()
+            .setAspectRatio(new android.util.Rational(w,h)).setSourceRectHint(new android.graphics.Rect(at[0],at[1],at[0]+w,at[1]+h));
+        if(Build.VERSION.SDK_INT>=31)b.setAutoEnterEnabled(pipAllowed()).setSeamlessResizeEnabled(false);
+        return b.build();
+    }
+    private boolean pipAllowed(){return visible&&!groupsOpen&&!isFinishing();}
+    /** Keeps the floating window's shape in step with the game area (Android 12+ enters it by itself on Home). */
+    private void updatePip(){if(isInPictureInPictureMode()||root==null)return;try{setPictureInPictureParams(pipParams());}catch(Exception ignored){}}
+    @Override protected void onUserLeaveHint(){super.onUserLeaveHint();
+        if(Build.VERSION.SDK_INT<31&&pipAllowed())try{enterPictureInPictureMode(pipParams());}catch(Exception ignored){}}
+    @Override public void onPictureInPictureModeChanged(boolean in,Configuration c){super.onPictureInPictureModeChanged(in,c);
+        TtrDiagnostics.log(this,in?"Game shown in the floating window.":"Floating window closed or opened full screen.");
+        TtrSafeArea.pip=in;
+        if(in){release();gamepad.release();closeKeyboard();controls.setVisibility(View.GONE);ui.removeCallbacks(poll);ui.post(poll);}
+        else{if(visible){controls.setVisibility(View.VISIBLE);TtrSafeArea.setFullscreen(this,safe,controls,true);}ui.post(this::updatePip);}
+        safe.requestApplyInsets();
     }
     private void closeKeyboard(){ime.hide();}
     private void release(){for(int code:pressed)display.key(code,false);pressed.clear();}
@@ -230,8 +259,8 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     private void closeGame(){release();closeKeyboard();gamepad.release();TtrRuntime.closeGame(this);}
     @Override public void onStart(){super.onStart();TtrKeepAlive.setBackground(this,false);TtrRuntime.setAudioPaused(this,false);}
     @Override public void onStop(){TtrRuntime.setAudioPaused(this,true);TtrKeepAlive.setBackground(this,true);super.onStop();}
-    @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.post(poll);TtrAppUpdate.start(this);}
-    @Override public void onPause(){resumed=false;ui.removeCallbacks(poll);gamepad.release();release();login.pause();super.onPause();}
+    @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.removeCallbacks(poll);ui.post(poll);TtrAppUpdate.start(this);}
+    @Override public void onPause(){resumed=false;if(!isInPictureInPictureMode())ui.removeCallbacks(poll);gamepad.release();release();login.pause();super.onPause();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);layoutDisplay();login.resize();}
     @Override public void onDestroy(){TtrDevServer.stop(this);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
         // Only a real close stops Windows; if Android recreates the screen (a system setting changed), the game keeps running.

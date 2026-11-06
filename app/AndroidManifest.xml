@@ -12,7 +12,7 @@
     <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
   </queries>
   <application android:label="TTR Mobile" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:debuggable="true" android:extractNativeLibs="true" android:usesCleartextTraffic="false" android:supportsRtl="true">
-    <activity android:name="org.ttrmobile.TtrActivity" android:exported="true" android:launchMode="singleTask" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation|touchscreen|screenLayout|smallestScreenSize|density|uiMode|fontScale|fontWeightAdjustment|colorMode|layoutDirection|locale|mcc|mnc|grammaticalGender" android:windowSoftInputMode="adjustResize">
+    <activity android:name="org.ttrmobile.TtrActivity" android:exported="true" android:launchMode="singleTask" android:supportsPictureInPicture="true" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation|touchscreen|screenLayout|smallestScreenSize|density|uiMode|fontScale|fontWeightAdjustment|colorMode|layoutDirection|locale|mcc|mnc|grammaticalGender" android:windowSoftInputMode="adjustResize">
       <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
     </activity>
     <service android:name="org.ttrmobile.TtrX11Service" android:process=":x11" android:exported="false" />
