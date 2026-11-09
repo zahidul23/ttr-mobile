@@ -167,8 +167,26 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     private void openGroups(){
         if(groupsOpen)return;
         release();closeKeyboard();
-        groupsOpen=true;updatePip();
+        groupsOpen=true;updatePip();watchHome(true);
         ui.post(launchGroups);
+    }
+    /**
+     * Home (or the app switcher) while the Groups sheet is open closes the sheet. Android only gives the floating
+     * window to the top screen, which is then Chrome's sheet, so this first Home just leaves the app; the game comes
+     * back full screen, and the next Home shows the floating window.
+     */
+    private android.content.BroadcastReceiver homeKey;
+    private void watchHome(boolean on){
+        if(on==(homeKey!=null))return;
+        if(!on){try{unregisterReceiver(homeKey);}catch(Exception ignored){}homeKey=null;return;}
+        homeKey=new android.content.BroadcastReceiver(){@Override public void onReceive(android.content.Context c,android.content.Intent i){
+            String reason=i.getStringExtra("reason");
+            if(groupsOpen&&("homekey".equals(reason)||"recentapps".equals(reason))){
+                TtrDiagnostics.log(TtrActivity.this,"Closing ToonHQ groups: the app is being left ("+reason+").");
+                groupsReopen=false;finishActivity(TtrGroups.REQUEST);groupsClosed();}
+        }};
+        android.content.IntentFilter f=new android.content.IntentFilter(android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
+        if(Build.VERSION.SDK_INT>=33)registerReceiver(homeKey,f,RECEIVER_EXPORTED);else registerReceiver(homeKey,f);
     }
     private final Runnable launchGroups=()->{
         if(!groupsOpen)return;
@@ -193,7 +211,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         }catch(android.content.ActivityNotFoundException e){groupsClosed();Toast.makeText(this,"No web browser found to open ToonHQ.",Toast.LENGTH_LONG).show();}
     };
     private void groupsClosed(){
-        ui.removeCallbacks(launchGroups);groupsOpen=false;updatePip();
+        ui.removeCallbacks(launchGroups);groupsOpen=false;watchHome(false);updatePip();
         if(groupsReopen){groupsReopen=false;ui.postDelayed(this::openGroups,150);}
     }
     @Override protected void onActivityResult(int request,int result,android.content.Intent data){
@@ -262,7 +280,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.removeCallbacks(poll);ui.post(poll);TtrAppUpdate.start(this);}
     @Override public void onPause(){resumed=false;if(!isInPictureInPictureMode())ui.removeCallbacks(poll);gamepad.release();release();login.pause();super.onPause();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);layoutDisplay();login.resize();}
-    @Override public void onDestroy(){TtrDevServer.stop(this);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
+    @Override public void onDestroy(){TtrDevServer.stop(this);watchHome(false);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
         // Only a real close stops Windows; if Android recreates the screen (a system setting changed), the game keeps running.
         // A close also ends the app's process once nothing needs it (a download may finish first).
         alive--;
