@@ -12,8 +12,8 @@ import java.util.Locale;
 /**
  * Installs the Windows runtime from public, pinned sources (no BannerHub/GameHub servers):
  *  - Wine: GameNative's open-source Proton 11 ARM64EC build for Android (GitHub releases).
- *  - FEX: the official FEX x86/x86-64 emulator DLLs for Wine (FEX's Ubuntu PPA).
- * Downloads are verified by SHA-256, unpacked into a staging folder, debug data is removed,
+ *  - FEX: the official FEX x86/x86-64 emulator DLLs for Wine (FEX's Ubuntu PPA package, bundled in the APK).
+ * Both are verified by SHA-256, unpacked into a staging folder, debug data is removed,
  * and the folder is renamed into place only when complete.
  */
 final class TtrWineRuntime {
@@ -22,7 +22,8 @@ final class TtrWineRuntime {
     static final String WINE_URL = "https://github.com/GameNative/proton-wine/releases/download/proton-11.0-2-20261024/proton-11.0-2-arm64ec.wcp";
     static final String WINE_SHA256 = "58d0eec540e01f24a4f7969432febe8250e49416d37c5c174ebec66b1baf1864";
     static final long WINE_SIZE = 98222999L;
-    static final String FEX_URL = "https://ppa.launchpadcontent.net/fex-emu/fex/ubuntu/pool/main/f/fex-emu-wine/fex-emu-wine_2610-1~n_arm64.deb";
+    /** FEX ships in the APK (native/fex): its PPA drops old builds, so a pinned download stops working. */
+    static final String FEX_ASSET = "runtime/fex.deb";
     static final String FEX_SHA256 = "edd6a8266f82199b1323549d64d75295b44773330dc61a44e3e5d9529bd100ba";
     static final long FEX_SIZE = 1827696L;
     static final String VERSION = WINE_SHA256.substring(0, 16) + "-" + FEX_SHA256.substring(0, 16) + "-v2";
@@ -43,7 +44,7 @@ final class TtrWineRuntime {
         File staging = new File(c.getFilesDir(), "wine-runtime.partial");
         try {
             File wcp = download(WINE_URL, WINE_SHA256, WINE_SIZE, new File(downloads, "proton.wcp"), "Downloading Windows (Wine)", 0, 60);
-            File deb = download(FEX_URL, FEX_SHA256, FEX_SIZE, new File(downloads, "fex.deb"), "Downloading x86 emulator (FEX)", 60, 62);
+            File deb = bundled(c, FEX_ASSET, FEX_SHA256, FEX_SIZE, new File(downloads, "fex.deb"), "Adding x86 emulator (FEX)", 60);
 
             stage("Unpacking Windows", 62);
             File tar = new File(downloads, "proton.tar");
@@ -98,6 +99,17 @@ final class TtrWineRuntime {
     private static void stage(String message, int percent) {
         TtrStartupProgress.setupMessage = message; TtrStartupProgress.setup = percent;
         TtrStartupProgress.setupBytes = TtrStartupProgress.setupTotalBytes = -1; TtrStartupProgress.setupSpeed = null;
+    }
+
+    /** Copies a file shipped in the APK's assets, verified against the pinned SHA-256. */
+    static File bundled(Context c, String asset, String sha256, long size, File out, String message, int percent) throws Exception {
+        stage(message, percent);
+        try (InputStream in = c.getAssets().open(asset); OutputStream file = new FileOutputStream(out)) {
+            byte[] buffer = new byte[1 << 16]; int n;
+            while ((n = in.read(buffer)) > 0) file.write(buffer, 0, n);
+        }
+        if (out.length() != size || !sha256.equals(hash(out))) { out.delete(); throw new IOException("The x86 emulator in the app failed verification; reinstall TTR Mobile."); }
+        return out;
     }
 
     /** Resumable HTTPS download, verified against the pinned SHA-256; reuses a verified file. */

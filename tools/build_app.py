@@ -15,7 +15,9 @@ from pathlib import Path
 from common import ROOT, TOOLS, NDK_BIN, find, run
 
 BUILD = ROOT / 'build/app'
-VERSION = '0.8.4'
+VERSION = '0.8.5'
+FEX_DEB = 'fex-emu-wine_2610-1~n_arm64.deb'
+FEX_SHA256 = 'edd6a8266f82199b1323549d64d75295b44773330dc61a44e3e5d9529bd100ba'
 PACKAGE = 'help.toontown.ttrmobile'
 DEV_PACKAGE = PACKAGE + '.dev'
 RELEASE_KEYSTORE = Path(os.environ.get('TTR_RELEASE_KEYSTORE', Path.home() / '.ttr-mobile/release.p12'))
@@ -108,13 +110,17 @@ def main():
     libs.update({n: ROOT / 'build/linux-libraries/native' / n for n in ('libX11.so', 'libXext.so', 'libxcb.so', 'libXau.so', 'libXdmcp.so', 'libXrender.so', 'libXfixes.so', 'libXrandr.so', 'libXcursor.so')})
     staged = BUILD / 'lib'; staged.mkdir(exist_ok=True)
     for name, path in libs.items(): shutil.copy2(path, staged / name); run(stripper, '--strip-unneeded', staged / name)
-    licenses = {'Termux-X11-GPL-3.0.txt': TOOLS / 'termux-x11-source/LICENSE', 'GL4ES-LICENSE.txt': TOOLS / 'gl4es-source-host/LICENSE',
+    # FEX ships in the APK: FEX's PPA drops old builds, so a pinned download stops working (native/fex/README.md).
+    fex = ROOT / 'native/fex' / FEX_DEB
+    if hashlib.sha256(fex.read_bytes()).hexdigest() != FEX_SHA256: raise RuntimeError(f'{fex} does not match its pinned SHA-256')
+    licenses = {'FEX-LICENSE.txt': ROOT / 'native/fex/LICENSE', 'Termux-X11-GPL-3.0.txt': TOOLS / 'termux-x11-source/LICENSE', 'GL4ES-LICENSE.txt': TOOLS / 'gl4es-source-host/LICENSE',
                 'bzip2-LICENSE.txt': ROOT / 'native/bzip2/vendor/bzip2-1.0.8/LICENSE', 'zstd-LICENSE.txt': TOOLS / 'zstd-source/zstd-1.5.6/LICENSE',
                 'xz-embedded-COPYING.txt': TOOLS / 'xz-embedded-source/COPYING'}
     inventory = {'version': VERSION, 'native': {n: hashlib.sha256((staged / n).read_bytes()).hexdigest() for n in libs}}
     with zipfile.ZipFile(unsigned, 'a', compression=zipfile.ZIP_DEFLATED) as z:
         z.write(dex / 'classes.dex', 'classes.dex')
         z.write(prerequisites['xkb'], 'assets/runtime/xkb.zip')
+        z.write(fex, 'assets/runtime/fex.deb')
         z.write(prerequisites['vulkan'], 'assets/runtime/vulkan-stack.tar.zst')
         z.writestr('assets/runtime/vulkan-stack.sha256', hashlib.sha256(prerequisites['vulkan'].read_bytes()).hexdigest())
         z.write(prerequisites['bootstrap'], 'assets/ttr/TtrBootstrap.exe')
