@@ -53,7 +53,6 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         add(storageBox, storageRow("Content packs", used[2], false), 4);
         View line = new View(activity); line.setBackgroundColor(0x26ffffff); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1))); lp.topMargin = dp(8); storageBox.addView(line, lp);
         add(storageBox, storageRow("Total", used[0] + used[1] + used[2], true), 8);
-        add(storageBox, text("Content packs count both copies: the one in your phone's folder and the one the game uses.", 11, MUTED), 6);
     }
     private View storageRow(String label, long bytes, boolean bold) {
         LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL);
@@ -324,7 +323,8 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         Button browse = button("Find and download packs"); browse.setTypeface(null, Typeface.BOLD); browse.setBackgroundTintList(android.content.res.ColorStateList.valueOf(GOLD)); browse.setTextColor(INK);
         browse.setOnClickListener(v -> TtrPackBrowser.open(activity)); add(packsPanel, browse, 14);
         packList = column(); add(packsPanel, packList, 12);
-        TextView where = text("Already have a pack? Copy its .mf file to:\n" + packsFolderLabel(), 12, MUTED); where.setTextIsSelectable(true); add(packsPanel, where, 14);
+        add(packsPanel, text("Already have a pack? Copy its .mf file into the pack folder with a file manager (look for TTR Mobile in its side menu).", 12, MUTED), 14);
+        Button openFolder = button("Open pack folder"); openFolder.setOnClickListener(v -> openPackFolder()); add(packsPanel, openFolder, 8);
         backFooter(packsPanel, this::leavePacks);
 
         // Live sign-in progress, shared by all pages (results and errors show as a notice instead).
@@ -487,8 +487,13 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         if (which == SETTINGS) refreshStorage();
         changed();
     }
-    /** Where packs go, as a file manager shows it. */
-    private String packsFolderLabel() { return "Android/data/" + activity.getPackageName() + "/files/resources"; }
+    /** Opens the system Files app at the pack folder (TtrPackProvider). */
+    private void openPackFolder() {
+        try {
+            android.net.Uri folder = android.provider.DocumentsContract.buildRootUri(TtrPackProvider.authority(activity), TtrPackProvider.ROOT_ID);
+            activity.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(folder, android.provider.DocumentsContract.Root.MIME_TYPE_ITEM));
+        } catch (Exception e) { showNotice("No file manager found to open the pack folder."); }
+    }
     private boolean packsLocked() {
         if (!TtrRuntime.isSessionRunning(activity)) return false;
         showNotice("The game is open: turn packs on or off and reorder them in its own Content Packs list."); return true;
@@ -614,7 +619,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     private void deletePack(TtrPacks.Pack pack) {
         if (packsLocked()) return;
         new TtrDialog(activity, "Delete " + pack.name + "?", "This removes the pack (" + TtrPacks.readable(pack.size) + ") from this phone. You can download it again later.")
-            .button("Delete", TtrDialog.DANGER, () -> { try { TtrPacks.delete(activity, pack); } catch (Exception e) { showNotice("Unable to delete this pack."); } refreshPacks(); })
+            .button("Delete", TtrDialog.DANGER, () -> { try { TtrPacks.delete(activity, pack); TtrPackProvider.changed(activity); } catch (Exception e) { showNotice("Unable to delete this pack."); } refreshPacks(); })
             .button("Cancel", TtrDialog.QUIET, null).show();
     }
     /** Windows and Linux builds share the report; older builds only have the on-screen log. */

@@ -7,25 +7,21 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Content packs: the .mf files players put in resources/. They live in the app's shared Android/data folder, where any
- * file manager can add them, and are copied into the game's own resources folder (private storage) each time the game
- * starts. Name, description and icon come from the pack itself (info.ini and pack.png); whether a pack is on, and the
+ * Content packs: the .mf files in the game's resources folder, one copy each. File managers reach the folder through
+ * TtrPackProvider. Name, description and icon come from the pack itself (info.ini and pack.png); whether a pack is on, and the
  * order it loads in, are the game's own settings.json entries, so the launcher and the in-game list always agree.
  */
 public final class TtrPacks {
@@ -47,10 +43,13 @@ public final class TtrPacks {
         return Math.max(1, bytes / 1024) + " KB";
     }
 
-    /** The folder players add packs to (Android/data/&lt;package&gt;/files/resources). */
+    /**
+     * The game's own content packs folder (private storage): the only copy of a pack. File managers reach it through
+     * TtrPackProvider.
+     */
     public static File folder(Context c) {
-        File base = c.getExternalFilesDir(null);
-        File dir = new File(base != null ? base : c.getFilesDir(), "resources");
+        File dir;
+        try { dir = new File(TtrUpdater.gameDirectory(c), "resources"); } catch (Exception e) { dir = new File(c.getFilesDir(), "ttr/game/resources"); }
         dir.mkdirs();
         return dir;
     }
@@ -100,14 +99,9 @@ public final class TtrPacks {
         File path = settings(c); JSONObject settings = readSettings(path);
         video(settings).put("content-pack-order", new JSONArray(names)); write(path, settings);
     }
-    /** Copies the packs into the running game's folder (its Refresh All picks them up). */
-    public static void syncNow(Context c) {
-        try { sync(c, TtrUpdater.gameDirectory(c)); } catch (Exception e) { android.util.Log.w("TtrPacks", "Content packs were not copied: " + e.getMessage()); }
-    }
     public static synchronized void delete(Context c, Pack pack) throws Exception {
         File f = new File(folder(c), pack.file); parsed.remove(pack.file);
         if (f.exists() && !f.delete()) throw new IOException("Unable to delete " + pack.file + ".");
-        new File(new File(TtrUpdater.gameDirectory(c), "resources"), pack.file).delete();
         File path = settings(c); JSONObject settings = readSettings(path); JSONObject video = video(settings);
         for (String key : new String[]{"content-pack-order", "content-packs-disabled"}) {
             List<String> values = names(video.optJSONArray(key)); if (values.remove(entry(pack))) video.put(key, new JSONArray(values));
@@ -115,24 +109,6 @@ public final class TtrPacks {
         write(path, settings);
     }
 
-    /** Copies new and changed packs into the game's resources folder and removes the ones taken out. */
-    public static synchronized void sync(Context c, File game) throws IOException {
-        File target = new File(game, "resources"); target.mkdirs();
-        File[] source = folder(c).listFiles((d, n) -> isPack(n)); Set<String> keep = new HashSet<>();
-        if (source != null) for (File from : source) {
-            if (!from.isFile()) continue;
-            keep.add(from.getName()); File to = new File(target, from.getName());
-            if (to.isFile() && to.length() == from.length() && to.lastModified() == from.lastModified()) continue;
-            File part = new File(target, from.getName() + ".part");
-            try (FileChannel in = new java.io.FileInputStream(from).getChannel(); FileChannel out = new FileOutputStream(part).getChannel()) {
-                long done = 0, size = in.size(); while (done < size) done += in.transferTo(done, size - done, out);
-            }
-            part.setLastModified(from.lastModified());
-            if (!part.renameTo(to)) { part.delete(); throw new IOException("Unable to install " + from.getName() + "."); }
-        }
-        File[] old = target.listFiles();
-        if (old != null) for (File f : old) if ((isPack(f.getName()) && !keep.contains(f.getName())) || f.getName().endsWith(".mf.part")) f.delete();
-    }
     private static List<String> strings(JSONArray array) {
         List<String> list = new ArrayList<>(); if (array != null) for (int i = 0; i < array.length(); i++) list.add(array.optString(i));
         return list;

@@ -28,7 +28,7 @@ final class TtrPackDownload {
         if (running) return false;
         running = true; Context c = context.getApplicationContext();
         new Thread(() -> {
-            String result; File part = new File(TtrPacks.folder(c), ".download.part");
+            String result; File part = new File(c.getCacheDir(), ".download.part");
             try { result = run(c, url, agent, disposition, mime, part, listener); }
             catch (Exception e) { result = e.getMessage() == null || e.getMessage().isEmpty() ? "The download failed." : e.getMessage(); }
             finally { part.delete(); synchronized (TtrPackDownload.class) { running = false; } }
@@ -86,7 +86,7 @@ final class TtrPackDownload {
                     if (done - shown > 262144 || shown == 0) { shown = done; listener.changed("Downloading " + name + (total > 0 ? " (" + done * 100 / total + "%)" : " (" + done / 1048576 + " MB)"), false); }
                 }
             }
-            String added = install(folder, part, name); TtrPacks.syncNow(c); return added;
+            String added = install(folder, part, name); TtrPackProvider.changed(c); return added;
         } finally { connection.disconnect(); }
     }
 
@@ -101,7 +101,7 @@ final class TtrPackDownload {
         if (TtrPacks.looksLikePack(part)) { place(folder, part, name.replaceFirst("(?i)\\.[a-z0-9]{1,5}$", "") + ".mf"); return "Added " + stem(name) + "."; }
         List<String> added = new ArrayList<>();
         try (ZipInputStream zip = new ZipInputStream(new java.io.BufferedInputStream(new java.io.FileInputStream(part)))) {
-            ZipEntry entry; File extracted = new File(folder, ".extract.part");
+            ZipEntry entry; File extracted = new File(part.getParentFile(), ".extract.part");
             try {
                 while ((entry = zip.getNextEntry()) != null) {
                     String base = entry.getName().substring(entry.getName().lastIndexOf('/') + 1);

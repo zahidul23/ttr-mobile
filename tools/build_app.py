@@ -91,6 +91,7 @@ def main():
     if args.dev_server:  # plain HTTP to the PC, and permission to install the PC's newer builds
         text = manifest.read_text(encoding='utf-8')
         text = text.replace('android:usesCleartextTraffic="false"', 'android:usesCleartextTraffic="true"').replace('android:label="TTR Mobile"', 'android:label="TTR Mobile Dev"')
+        text = text.replace('help.toontown.ttrmobile.packs', DEV_PACKAGE + '.packs')  # the provider's authority follows the renamed package
         text = text.replace('<uses-permission android:name="android.permission.INTERNET" />',
                             '<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />')
         manifest = BUILD / 'AndroidManifest-dev-server.xml'; manifest.write_text(text, encoding='utf-8')
