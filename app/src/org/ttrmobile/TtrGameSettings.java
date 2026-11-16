@@ -45,6 +45,7 @@ public final class TtrGameSettings {
         try {
             stream = file.startWrite(); stream.write((settings.toString(2) + "\n").getBytes(StandardCharsets.UTF_8)); file.finishWrite(stream);
         } catch (Exception e) { if (stream != null) file.failWrite(stream); throw e; }
+        try { TtrPacks.sync(c, game); } catch (Exception e) { android.util.Log.w("TtrPacks", "Content packs were not copied: " + e.getMessage()); }
         defaults.edit().putBoolean("controller-v1", true).putBoolean("show-fps-v1", true).apply();
     }
 }

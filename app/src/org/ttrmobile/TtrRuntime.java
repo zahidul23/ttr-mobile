@@ -213,6 +213,7 @@ public final class TtrRuntime {
             if (new File(graphics, "layers").isDirectory()) env.put("VK_ADD_IMPLICIT_LAYER_PATH", new File(graphics, "layers").getAbsolutePath());
         }
         env.put("LD_PRELOAD", c.getApplicationInfo().nativeLibraryDir + "/libttrexec.so"); // child processes via linker64
+        env.put("TTR_FOLDER_REQUEST", new File(dir, TtrFolderRequest.FILE).getAbsolutePath()); // "Open Folder" in the game (see TtrFolderRequest)
         env.put("DISPLAY", new File(dir, "tmp/.X11-unix/X77").getAbsolutePath()); env.put("XAUTHORITY", new File(dir, "Xauthority").getAbsolutePath());
         env.put("WINEPREFIX", prefix(c).getAbsolutePath()); env.put("WINELOADER", loader.getAbsolutePath()); env.put("WINELOADERNOEXEC", "1");
         // Detailed logging (Diagnostics menu): process start/exit, exceptions and errors from Wine.
