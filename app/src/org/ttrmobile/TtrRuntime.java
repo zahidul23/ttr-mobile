@@ -233,6 +233,10 @@ public final class TtrRuntime {
         env.put("LIBGL_MIPMAP", "3");
         // Game surfaces cover the whole X screen, so rotating (a wider window) needs no new surface.
         if (TtrViewport.rootWidth > 0) { env.put("TTR_GL_MIN_WIDTH", String.valueOf(TtrViewport.rootWidth)); env.put("TTR_GL_MIN_HEIGHT", String.valueOf(TtrViewport.renderHeight)); }
+        // FEX keeps x86 memory ordering with a barrier after every unaligned access. TTR's protector unpacks the game
+        // through unaligned data, so those barriers doubled its start (window after 33 s instead of 19 s on a Moto G
+        // Stylus). Off: unaligned accesses are plain; aligned ones keep full ordering.
+        env.put("FEX_HALFBARRIERTSOENABLED", "0");
         if (new File(dir, "present-off").isFile()) env.put("TTR_PRESENT", "0"); // developer switch: GL4ES's original frame copy
         try { // Developer switch: no_backup/ttr/gl-env holds KEY=VALUE lines for graphics experiments (LIBGL_*, TTR_*).
             File extra = new File(dir, "gl-env");
