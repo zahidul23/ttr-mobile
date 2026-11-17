@@ -191,6 +191,40 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
 }
 
 /*
+ * Android (11 and later) refuses apps the interface list behind if_nameindex() (EACCES). Wine's network driver
+ * (nsiproxy, behind Windows' GetAdaptersAddresses) then crashed while holding its interface lock, and every later
+ * adapter query waited forever: Corporate Clash froze right after it connected. The list is built from
+ * getifaddrs() instead, which apps may still use (interfaces that have an address). Freed as bionic frees it.
+ */
+#include <ifaddrs.h>
+#include <net/if.h>
+typedef struct if_nameindex *(*if_nameindex_fn)(void);
+struct if_nameindex *if_nameindex(void) {
+    static if_nameindex_fn real; if (!real) real = (if_nameindex_fn)dlsym(RTLD_NEXT, "if_nameindex");
+    struct if_nameindex *list = real ? real() : NULL;
+    if (list) return list;
+    struct ifaddrs *addrs = NULL;
+    if (getifaddrs(&addrs)) return NULL;
+    size_t total = 0, count = 0;
+    for (struct ifaddrs *a = addrs; a; a = a->ifa_next) total++;
+    list = calloc(total + 1, sizeof(*list));
+    for (struct ifaddrs *a = addrs; list && a; a = a->ifa_next) {
+        unsigned int index = a->ifa_name ? if_nametoindex(a->ifa_name) : 0, seen = 0;
+        for (size_t i = 0; i < count; i++) seen |= list[i].if_index == index;
+        if (!index || seen || !(list[count].if_name = strdup(a->ifa_name))) continue;
+        list[count++].if_index = index;
+    }
+    freeifaddrs(addrs);
+    if (!list) errno = ENOMEM;
+    return list;
+}
+void if_freenameindex(struct if_nameindex *list) {
+    if (!list) return;
+    for (struct if_nameindex *e = list; e->if_index || e->if_name; e++) free(e->if_name);
+    free(list);
+}
+
+/*
  * "Signal everyone" never makes sense inside the app: kill(-1, sig) reaches every process of the app's user
  * (the app, its display and all of Wine), and kill(0 / -group, sig) a whole group. On an Android 17 Galaxy S23
  * such an interrupt arrived as the game started: first it closed the app, later it stopped wineserver (which

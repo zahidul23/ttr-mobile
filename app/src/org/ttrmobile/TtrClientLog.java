@@ -26,7 +26,8 @@ public final class TtrClientLog {
      */
     static int reached(Context c, long sinceMillis) {
         try {
-            File[] logs = new File(TtrUpdater.gameDirectory(c), "logs").listFiles((d, n) -> n.startsWith("ttr-") && n.endsWith(".log"));
+            String game = TtrGame.active(c); boolean clash = TtrGame.CLASH.equals(game);
+            File[] logs = new File(TtrGame.directory(c, game), "logs").listFiles((d, n) -> (clash || n.startsWith("ttr-")) && n.endsWith(".log"));
             File newest = null;
             if (logs != null) for (File f : logs) if (f.lastModified() >= sinceMillis - 2000 && (newest == null || f.lastModified() > newest.lastModified())) newest = f;
             if (newest == null) return -1;

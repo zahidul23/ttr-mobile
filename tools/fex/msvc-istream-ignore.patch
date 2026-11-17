@@ -1,0 +1,167 @@
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index 63280a4..035b19e 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -14,6 +14,7 @@ $end_info$
+ #endif
+ #include "Interface/Core/ArchHelpers/Arm64Emitter.h"
+ #include "Interface/Core/LookupCache.h"
++#include "Interface/Core/MSVCIstreamIgnore.h"
+ #include "Interface/Core/CPUBackend.h"
+ #include "Interface/Core/CPUID.h"
+ #include "Interface/Core/Frontend.h"
+@@ -595,6 +596,10 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+       Thread->OpDispatcher->StartNewBlock();
+ 
+       const uint64_t InstsInBlock = Block.NumInstructions;
++      // TTR Mobile: MSVC's istream::ignore loop skips what is buffered in one step (MSVCIstreamIgnore.h).
++      if (InstsInBlock && Config.Is64BitMode && MSVCIstreamIgnore::IsLoopHead(Block.Entry)) {
++        Thread->OpDispatcher->EmitMSVCIstreamIgnoreFastPath();
++      }
+       if (InstsInBlock == 0) {
+         // Special case for an empty instruction block.
+         Thread->OpDispatcher->ExitFunction(Thread->OpDispatcher->_InlineEntrypointOffset(GPRSize, Block.Entry - GuestRIP));
+diff --git a/FEXCore/Source/Interface/Core/MSVCIstreamIgnore.h b/FEXCore/Source/Interface/Core/MSVCIstreamIgnore.h
+new file mode 100644
+index 0000000..e371ffb
+--- /dev/null
++++ b/FEXCore/Source/Interface/Core/MSVCIstreamIgnore.h
+@@ -0,0 +1,74 @@
++// SPDX-License-Identifier: MIT
++// TTR Mobile patch (not part of FEX): recognises the character loop of MSVC's
++// std::basic_istream<char>::ignore(streamsize, int_type) by its exact code, including the three small
++// functions it calls. Corporate Clash's Panda3D skips whole resource files through it at startup (1.76 GB,
++// one byte per iteration), which took about 34 s translated.
++#pragma once
++#include <cstdint>
++#include <cstring>
++
++namespace FEXCore::MSVCIstreamIgnore {
++struct Pattern {
++  const uint8_t* Bytes;
++  const uint8_t* Mask; // 0 = any byte
++  size_t Size;
++  bool Matches(const uint8_t* Code) const {
++    for (size_t i = 0; i < Size; ++i) {
++      if (Mask[i] && Code[i] != Bytes[i]) {
++        return false;
++      }
++    }
++    return true;
++  }
++};
++
++inline const uint8_t* CallTarget(const uint8_t* Call) {
++  int32_t Rel;
++  memcpy(&Rel, Call + 1, 4);
++  return Call + 5 + Rel;
++}
++
++// True when GuestRIP is the head of the loop (cmp rbx, r15).
++inline bool IsLoopHead(uint64_t GuestRIP) {
++  const auto* Code = reinterpret_cast<const uint8_t*>(GuestRIP);
++  // cmp rbx,r15; je +6; sub rbx,1; js; mov rax,[rdi]; movsxd rcx,[rax+4]; mov rcx,[rcx+rdi+0x48]; call sbumpc;
++  // mov esi,eax; cmp eax,-1; je; mov rcx,rdi; call count; cmp esi,ebp; jne head; jmp
++  static const uint8_t Loop[] = {0x49, 0x3b, 0xdf, 0x74, 0x06, 0x48, 0x83, 0xeb, 0x01, 0x78, 0x2c, 0x48, 0x8b, 0x07, 0x48, 0x63,
++                                 0x48, 0x04, 0x48, 0x8b, 0x4c, 0x39, 0x48, 0xe8, 0,    0,    0,    0,    0x8b, 0xf0, 0x83, 0xf8,
++                                 0xff, 0x74, 0x0e, 0x48, 0x8b, 0xcf, 0xe8, 0,    0,    0,    0,    0x3b, 0xf5, 0x75, 0xd1, 0xeb, 0x06};
++  static const uint8_t LoopMask[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
++                                     1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1};
++  // Cheap rejection first: this runs for every translated block.
++  if (Code[0] != 0x49 || Code[1] != 0x3b || Code[2] != 0xdf || Code[3] != 0x74) {
++    return false;
++  }
++  if (!Pattern {Loop, LoopMask, sizeof(Loop)}.Matches(Code)) {
++    return false;
++  }
++  // r15 = 0x7fffffffffffffff, set just before the loop: movabs r15, max; mov [rsp+0x58], rsi; nop dword [rax]
++  static const uint8_t Before[] = {0x49, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0x48, 0x89, 0x74, 0x24, 0x58, 0x0f, 0x1f, 0x00};
++  if (memcmp(Code - sizeof(Before), Before, sizeof(Before)) != 0) {
++    return false;
++  }
++  // streambuf::sbumpc: push rbx; sub rsp,0x20; mov rbx,rcx; call _Gnavail; test rax,rax; jle uflow; mov rax,[rbx+0x50];
++  // dec dword [rax]; mov rcx,[rbx+0x38]; mov rdx,[rcx]; lea rax,[rdx+1]; mov [rcx],rax; movzx eax,byte [rdx]; ...; ret
++  static const uint8_t Bump[] = {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0xe8, 0,    0,    0,    0,    0x48, 0x85,
++                                 0xc0, 0x7e, 0x1d, 0x48, 0x8b, 0x43, 0x50, 0xff, 0x08, 0x48, 0x8b, 0x4b, 0x38, 0x48, 0x8b, 0x11,
++                                 0x48, 0x8d, 0x42, 0x01, 0x48, 0x89, 0x01, 0x0f, 0xb6, 0x02, 0x48, 0x83, 0xc4, 0x20, 0x5b, 0xc3};
++  static const uint8_t BumpMask[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
++                                     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
++  const uint8_t* BumpCode = CallTarget(Code + 23);
++  if (!Pattern {Bump, BumpMask, sizeof(Bump)}.Matches(BumpCode)) {
++    return false;
++  }
++  // streambuf::_Gnavail: mov rax,[rcx+0x38]; cmp qword [rax],0; je zero; mov rax,[rcx+0x50]; movsxd rax,[rax]; ret
++  static const uint8_t Avail[] = {0x48, 0x8b, 0x41, 0x38, 0x48, 0x83, 0x38, 0x00, 0x74, 0x08, 0x48, 0x8b, 0x41, 0x50, 0x48, 0x63, 0x00, 0xc3};
++  if (memcmp(CallTarget(BumpCode + 9), Avail, sizeof(Avail)) != 0) {
++    return false;
++  }
++  // gcount increment: mov rax,[rcx+8]; movabs rdx,max; cmp rax,rdx; je ret; inc rax; mov [rcx+8],rax; ret
++  static const uint8_t Count[] = {0x48, 0x8b, 0x41, 0x08, 0x48, 0xba, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
++                                  0x48, 0x3b, 0xc2, 0x74, 0x07, 0x48, 0xff, 0xc0, 0x48, 0x89, 0x41, 0x08, 0xc3};
++  return memcmp(CallTarget(Code + 38), Count, sizeof(Count)) == 0;
++}
++} // namespace FEXCore::MSVCIstreamIgnore
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+index 8dc605c..a4e3658 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -2967,6 +2967,46 @@ void OpDispatchBuilder::XLATOp(OpcodeArgs) {
+   StoreGPRRegister(X86State::REG_RAX, Res, OpSize::i8Bit);
+ }
+ 
++// TTR Mobile: emitted at the head of MSVC's std::istream::ignore(count, delim) loop, which otherwise takes one
++// character per iteration through three calls (sbumpc, _Gnavail, the gcount increment). When the delimiter is
++// EOF, so no character can match it, every character still in the stream buffer's get area is consumed the same
++// way; this does those iterations at once: the get pointer, the buffer's count, gcount and the remaining count
++// move by min(buffered, remaining). The loop's own code then runs as before for the next character, which
++// refills the buffer or ends the loop. Branch-free: with nothing to skip, N is 0 and the stores rewrite what
++// was there.
++//
++// Loop registers (fixed by the byte pattern that selects this): RBX remaining count, RDI the istream, EBP delim.
++void OpDispatchBuilder::EmitMSVCIstreamIgnoreFastPath() {
++  const auto S64 = OpSize::i64Bit;
++  const auto S32 = OpSize::i32Bit;
++  Ref Count = LoadGPRRegister(X86State::REG_RBX);
++  Ref This = LoadGPRRegister(X86State::REG_RDI);
++  Ref Delim = LoadGPRRegister(X86State::REG_RBP);
++  Ref Zero = Constant(0);
++
++  // rdbuf(): the ios base is at this + vbtable[1]; its stream buffer pointer at +0x48.
++  Ref VBTable = _LoadMemGPRAutoTSO(S64, This);
++  Ref IosOffset = _Sbfe(S64, 32, 0, _LoadMemGPRAutoTSO(S32, _Add(S64, VBTable, Constant(4))));
++  Ref Buffer = _LoadMemGPRAutoTSO(S64, _Add(S64, _Add(S64, This, IosOffset), Constant(0x48)));
++  // streambuf: _IGnext (+0x38) points at the get pointer, _IGcount (+0x50) at the int count of characters left.
++  Ref NextPtr = _LoadMemGPRAutoTSO(S64, _Add(S64, Buffer, Constant(0x38)));
++  Ref CountPtr = _LoadMemGPRAutoTSO(S64, _Add(S64, Buffer, Constant(0x50)));
++  Ref Next = _LoadMemGPRAutoTSO(S64, NextPtr);
++  Ref Avail = _Sbfe(S64, 32, 0, _LoadMemGPRAutoTSO(S32, CountPtr));
++
++  Ref N = _Select(S64, S64, CondClass::SLT, Avail, Count, Avail, Count);
++  N = _Select(S64, S64, CondClass::SGT, N, Zero, N, Zero);
++  N = _Select(S64, S64, CondClass::EQ, Next, Zero, Zero, N);                               // no get area
++  N = _Select(S64, S64, CondClass::EQ, Count, Constant(0x7fff'ffff'ffff'ffffLL), Zero, N); // "unlimited" count
++  N = _Select(S64, S32, CondClass::EQ, Delim, Constant(0xffff'ffffLL), N, Zero);           // only delim == EOF
++
++  _StoreMemGPRAutoTSO(S64, NextPtr, _Add(S64, Next, N));
++  _StoreMemGPRAutoTSO(S32, CountPtr, _Sub(S64, Avail, N));
++  Ref GCountAddr = _Add(S64, This, Constant(8));
++  _StoreMemGPRAutoTSO(S64, GCountAddr, _Add(S64, _LoadMemGPRAutoTSO(S64, GCountAddr), N));
++  StoreGPRRegister(X86State::REG_RBX, _Sub(S64, Count, N));
++}
++
+ void OpDispatchBuilder::ReadSegmentReg(OpcodeArgs, OpDispatchBuilder::Segment Seg) {
+   // 64-bit only
+   // Doesn't hit the segment register optimization
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index 71766e0..348895a 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -475,6 +475,8 @@ public:
+   void AAMOp(OpcodeArgs);
+   void AADOp(OpcodeArgs);
+   void XLATOp(OpcodeArgs);
++  // TTR Mobile: bulk step for MSVC's std::istream::ignore loop (see MSVCIstreamIgnore.h).
++  void EmitMSVCIstreamIgnoreFastPath();
+   void RDRANDOp(OpcodeArgs, bool Reseed);
+ 
+   enum class Segment {

@@ -176,7 +176,7 @@ public final class TtrUpdater {
             throw new IOException("Unable to download or verify " + name + ". Retry when connected.");
         } finally { packed.delete(); staged.delete(); }
     }
-    private static String acquire(String url, File file, Progress progress, String name, String label) throws Exception {
+    static String acquire(String url, File file, Progress progress, String name, String label) throws Exception {
         HttpsURLConnection c = TtrHttp.open(url); MessageDigest hash = MessageDigest.getInstance("SHA-1");
         try {
             if (c.getResponseCode() != 200) throw new IOException("Game download unavailable.");

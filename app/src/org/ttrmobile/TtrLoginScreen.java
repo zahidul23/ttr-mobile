@@ -1,6 +1,5 @@
 package org.ttrmobile;
 
-import android.app.AlertDialog;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -29,38 +28,23 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     private final Activity activity;
     public View view;
     private final boolean prewarm;
-    private final TtrAccounts vault;
+    private TtrAccounts vault;
+    /** Tests supply their own vault; it is then kept when the game changes. */
+    private final boolean fixedVault;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private EditText username, password;
-    private LinearLayout card, mainPanel, gamePanel, accountPanel, filesCard, readyCard, packsPanel, packList;
+    private LinearLayout card, mainPanel, gamePanel, accountPanel, choosePanel, filesCard, readyCard, storageList, packsPanel, packList;
+    private TextView authStage, fileStage, release, readyRelease, accountStatus, passwordHelp, accountTitle, accountHint, title, filesTitle;
+    private Button downloadFiles;
+    private final Map<String,Button> gameTabs = new LinkedHashMap<>();
+    private LinearLayout gameTabRow;
+    /** Content pack rows on the settings page (Rewritten only): its children from packsFrom up to packsTo. */
+    private int packsFrom, packsTo;
     private int packsLoad;
     private TextView packsIntro;
     private View gear;
     private View backdropRoot, backdropArt, backdropShade;
-    private LinearLayout header, outerBox, storageBox;
-    private int storageLoad;
-    /** Storage used by Windows, the TTR game files and content packs (measured off the main thread when Settings opens). */
-    private void refreshStorage() {
-        final int load = ++storageLoad;
-        if (storageBox.getChildCount() == 0) { TextView wait = text("Measuring storage\u2026", 13, MUTED); storageBox.addView(wait); }
-        new Thread(() -> { long[] used = TtrUsage.measure(activity); ui.post(() -> { if (load == storageLoad) showStorage(used); }); }, "ttr-usage").start();
-    }
-    private void showStorage(long[] used) {
-        storageBox.removeAllViews();
-        TextView title = text("Storage used on this phone", 12, GOLD); title.setTypeface(null, Typeface.BOLD); title.setAllCaps(true); title.setLetterSpacing(0.08f); storageBox.addView(title);
-        add(storageBox, storageRow("Windows", used[0], false), 8);
-        add(storageBox, storageRow("TTR game files", used[1], false), 4);
-        add(storageBox, storageRow("Content packs", used[2], false), 4);
-        View line = new View(activity); line.setBackgroundColor(0x26ffffff); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1))); lp.topMargin = dp(8); storageBox.addView(line, lp);
-        add(storageBox, storageRow("Total", used[0] + used[1] + used[2], true), 8);
-    }
-    private View storageRow(String label, long bytes, boolean bold) {
-        LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name = text(label, 14, bold ? Color.WHITE : SOFT), value = text(TtrPacks.readable(bytes), 14, bold ? Color.WHITE : SOFT); value.setGravity(Gravity.END);
-        if (bold) { name.setTypeface(null, Typeface.BOLD); value.setTypeface(null, Typeface.BOLD); }
-        row.addView(name, new LinearLayout.LayoutParams(0, -2, 1)); row.addView(value);
-        return row;
-    }
+    private LinearLayout header, outerBox;
     /** Last system-bar and cutout insets; the launcher screen pads for them, the manager over the game does not (the game area is already below them). */
     private int[] insetPad = {0, 0, 0, 0};
     /** The launcher's artwork, tint and game title; over the running game they are off, so the game shows around a card that starts at the page heading. */
@@ -73,7 +57,6 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         ((LinearLayout.LayoutParams) packsPanel.getLayoutParams()).topMargin = dp(on ? 18 : 0); packsPanel.requestLayout();
         card.setBackground(background(on ? 0xef102b3a : 0xfc102b3a, 22)); // nearly solid over the game, so the text stays readable
     }
-    private TextView authStage, fileStage, release, readyRelease, accountStatus, passwordHelp, accountTitle, accountHint;
     private ProgressPanel runtimePanel, clientPanel;
     private LinearLayout accountChoices;
     private HorizontalScrollView accountsScroll;
@@ -88,7 +71,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     private TextView notice;
     private int shownMessage = TtrLauncher.messageId;
     private String shownError;
-    private static final int MAIN = 0, ACCOUNT = 1, SETTINGS = 2, PACKS = 3;
+    private static final int MAIN = 0, ACCOUNT = 1, SETTINGS = 2, CHOOSE = 3, PACKS = 4;
     private static final int GOLD = 0xffffd65e, INK = 0xff0a2634, MUTED = 0xffb8d0dd, SOFT = 0xffdcebf1, CHIP = 0xff254e66;
 
     /** Heading + step, current status, determinate bar, then detail and time remaining. */
@@ -145,14 +128,46 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         }
     };
     public TtrLoginScreen(Activity activity, boolean prewarm) {
-        this(activity,prewarm,new TtrAccounts(activity));
+        this(activity,prewarm,null);
     }
     TtrLoginScreen(Activity activity,boolean prewarm,TtrAccounts vault) {
-        this.activity = activity; this.prewarm = prewarm;this.vault=vault;
+        this.activity = activity; this.prewarm = prewarm;this.fixedVault=vault!=null;this.vault=vault!=null?vault:new TtrAccounts(activity);
         activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         activity.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        buildScreen(); refreshAccounts();
+        TtrGameFiles.follow(activity);
+        buildScreen(); showGame(); if(TtrGame.chosen(activity))refreshAccounts();else showPanel(CHOOSE);
         if(TtrLauncher.selected.isEmpty()){username.setText(draftUsername);password.setText(draftPassword);}
+    }
+    private String game() { return TtrGame.active(activity); }
+    /** Header, tabs and wording for the chosen game. */
+    private void showGame() {
+        String g = game();
+        title.setText(TtrGame.chosen(activity) ? TtrGame.fullName(g) : "Toontown");
+        filesTitle.setText(TtrGame.name(g) + " files");
+        for (int i = packsFrom; i < packsTo; i++) gamePanel.getChildAt(i).setVisibility(TtrGame.TTR.equals(g) ? View.VISIBLE : View.GONE);  // packs are a Rewritten feature
+        for (Map.Entry<String,Button> tab : gameTabs.entrySet()) {
+            boolean on = tab.getKey().equals(g); Button b = tab.getValue();
+            b.setTextColor(on ? INK : Color.WHITE); chip(b, on ? GOLD : 0x2effffff); b.setTypeface(null, on ? Typeface.BOLD : Typeface.NORMAL);
+        }
+    }
+    /** Switches game: its own accounts and files. A download of the other game stops (after confirming). */
+    private void pickGame(String g) {
+        if (g.equals(TtrGame.current(activity))) { if (panel == CHOOSE) showPanel(MAIN); return; }
+        if (TtrLauncher.busy || runtimeStarting || TtrRuntime.isSessionRunning(activity)) return;
+        if (TtrGameFiles.working(TtrGame.current(activity)) && !TtrGame.current(activity).isEmpty()) {
+            new TtrDialog(activity, "Stop the " + TtrGame.name(TtrGame.current(activity)) + " download?", "Files already downloaded are kept. The rest downloads when you switch back.")
+                .button("Switch game", TtrDialog.PRIMARY, () -> switchGame(g)).button("Cancel", TtrDialog.QUIET, null).show();
+            return;
+        }
+        switchGame(g);
+    }
+    private void switchGame(String g) {
+        TtrGame.choose(activity, g); playQueued = false; editingPassword = false; draftNew = false;
+        TtrLauncher.selected = ""; TtrLauncher.message = "";
+        if (!fixedVault) vault = new TtrAccounts(activity, g);
+        TtrGameFiles.follow(activity); TtrGameFiles.ensure(activity, false);
+        showGame(); refreshAccounts(); if (!names.isEmpty()) showPanel(MAIN);
+        TtrDiagnostics.log(activity, "Game chosen: " + TtrGame.name(g));
     }
     private int dp(int value) { return Math.round(value * activity.getResources().getDisplayMetrics().density); }
     private GradientDrawable background(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
@@ -224,17 +239,38 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         header = new LinearLayout(activity); header.setGravity(Gravity.CENTER_VERTICAL);
         ImageView icon = new ImageView(activity); icon.setImageDrawable(activity.getApplicationInfo().loadIcon(activity.getPackageManager())); icon.setContentDescription("TTR Mobile (unofficial)"); header.addView(icon, new LinearLayout.LayoutParams(dp(56), dp(56)));
         LinearLayout titles = column();
-        TextView title = text("Toontown Rewritten", 22, Color.WHITE); title.setTypeface(null, Typeface.BOLD); titles.addView(title);
-        titles.addView(text("Android wrapper for Windows TTR", 13, MUTED));
+        title = text("Toontown", 22, Color.WHITE); title.setTypeface(null, Typeface.BOLD); titles.addView(title);
+        titles.addView(text("Android wrapper for Windows Toontown", 13, MUTED));
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1); titleParams.leftMargin = dp(12); header.addView(titles, titleParams);
         gear = new Gear(); gear.setContentDescription("Settings"); gear.setClickable(true); gear.setFocusable(true); tactile(gear);
         gear.setBackground(background(0x26ffffff, 22));
         gear.setOnClickListener(v -> showPanel(panel == SETTINGS ? MAIN : SETTINGS)); header.addView(gear, new LinearLayout.LayoutParams(dp(44), dp(44)));
         add(card, header, 0);
 
-        // Main page: who's playing, Play, and one status card.
-        mainPanel = column(); add(card, mainPanel, 18);
-        mainPanel.addView(heading("Who's playing?"));
+        // First start: pick a game; nothing is downloaded until then.
+        choosePanel = column(); add(card, choosePanel, 18); choosePanel.setVisibility(View.GONE);
+        TextView chooseTitle = text("Which game do you want to play?", 19, Color.WHITE); chooseTitle.setTypeface(null, Typeface.BOLD); choosePanel.addView(chooseTitle);
+        add(choosePanel, text("Only the game you pick is downloaded. You can switch any time, and remove a game you no longer play in Settings.", 13, MUTED), 4);
+        for (String g : TtrGame.ALL) {
+            Button choice = button("");
+            choice.setText(Html.fromHtml("<b>" + TtrGame.fullName(g) + "</b><br><small>" + (TtrGame.CLASH.equals(g) ? "The Corporate Clash fan server" : "The Toontown Rewritten fan server")
+                + " · " + TtrGame.downloadSize(g) + " download</small>", Html.FROM_HTML_MODE_LEGACY));
+            chip(choice, CHIP); choice.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); choice.setPadding(dp(18), dp(10), dp(18), dp(10));
+            choice.setOnClickListener(v -> switchGame(g));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(76)); p.topMargin = dp(12); choosePanel.addView(choice, p);
+        }
+
+        // Main page: game, who's playing, Play, and one status card.
+        mainPanel = column(); add(card, mainPanel, 14);
+        gameTabRow = new LinearLayout(activity);
+        for (String g : TtrGame.ALL) {
+            Button tab = button(TtrGame.name(g)); tab.setTextSize(14); tab.setPadding(dp(8), 0, dp(8), 0);
+            tab.setOnClickListener(v -> pickGame(g)); gameTabs.put(g, tab);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(44), 1); if (gameTabRow.getChildCount() > 0) p.leftMargin = dp(8);
+            gameTabRow.addView(tab, p);
+        }
+        mainPanel.addView(gameTabRow);
+        add(mainPanel, heading("Who's playing?"), 16);
         accountsScroll = new HorizontalScrollView(activity); accountsScroll.setHorizontalScrollBarEnabled(false);
         accountChoices = new LinearLayout(activity); accountChoices.setBaselineAligned(false); accountsScroll.addView(accountChoices); add(mainPanel, accountsScroll, 8);
         addAccount = button("+ Add\naccount"); addAccount.setTextColor(SOFT); chip(addAccount, 0x2effffff); addAccount.setPadding(dp(18), dp(6), dp(18), dp(6)); addAccount.setGravity(Gravity.CENTER);
@@ -248,15 +284,17 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         runtimePanel = new ProgressPanel("Getting ready"); add(mainPanel, runtimePanel.root, 14);
         clientPanel = new ProgressPanel("Launching"); add(mainPanel, clientPanel.root, 14); clientPanel.root.setVisibility(View.GONE);
         filesCard = column(); filesCard.setPadding(dp(16), dp(12), dp(16), dp(14)); filesCard.setBackground(background(0x26ffffff, 16)); add(mainPanel, filesCard, 14);
-        TextView filesHeading = text("Game files", 12, GOLD); filesHeading.setTypeface(null, Typeface.BOLD); filesHeading.setAllCaps(true); filesHeading.setLetterSpacing(0.08f); filesCard.addView(filesHeading);
+        filesTitle = text("Game files", 12, GOLD); filesTitle.setTypeface(null, Typeface.BOLD); filesTitle.setAllCaps(true); filesTitle.setLetterSpacing(0.08f); filesCard.addView(filesTitle);
         fileStage = text("Preparing game files…", 15, Color.WHITE); add(filesCard, fileStage, 6);
         fileProgress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal); fileProgress.setIndeterminate(true);
         fileProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(GOLD)); add(filesCard, fileProgress, 6);
         cancelFiles = link("Cancel download"); cancelFiles.setOnClickListener(v -> TtrGameFiles.cancel()); add(filesCard, cancelFiles, 2);
+        downloadFiles = button("Download"); downloadFiles.setTextColor(INK); downloadFiles.setTypeface(null, Typeface.BOLD);
+        downloadFiles.setBackgroundTintList(android.content.res.ColorStateList.valueOf(GOLD)); downloadFiles.setOnClickListener(v -> TtrGameFiles.download(activity)); add(filesCard, downloadFiles, 8);
         readyCard = new LinearLayout(activity); readyCard.setGravity(Gravity.CENTER_VERTICAL); readyCard.setPadding(dp(16), dp(12), dp(16), dp(12)); readyCard.setBackground(background(0x1affffff, 16));
         TextView tick = text("✓", 18, 0xff7ee0a8); tick.setTypeface(null, Typeface.BOLD); readyCard.addView(tick);
         LinearLayout readyText = column(); TextView readyTitle = text("Ready to play", 15, Color.WHITE); readyTitle.setTypeface(null, Typeface.BOLD); readyText.addView(readyTitle);
-        readyRelease = text(TtrUpdater.release(activity), 12, MUTED); readyText.addView(readyRelease);
+        readyRelease = text(TtrGameFiles.release(activity, game()), 12, MUTED); readyText.addView(readyRelease);
         LinearLayout.LayoutParams readyParams = new LinearLayout.LayoutParams(0, -2, 1); readyParams.leftMargin = dp(12); readyCard.addView(readyText, readyParams);
         add(mainPanel, readyCard, 14);
         // TTR Mobile's own version and whether a newer release is out (Windows app only: TtrAppUpdate exists there).
@@ -302,17 +340,21 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         section("Controls");
         add(gamePanel, setting("Haptic feedback", "In the game, this works in portrait only.",
             toggle(TtrTouchControls.haptics(activity), on -> TtrTouchControls.setHaptics(activity, on))), 10);
+        packsFrom = gamePanel.getChildCount();
         section("Content packs");
         add(gamePanel, setting("Content packs", "Packs change how the game looks or sounds. Add them from the browser here, or copy .mf files into the packs folder.", null), 10);
         Button managePacks = button("Manage content packs"); managePacks.setOnClickListener(v -> showPanel(PACKS)); add(gamePanel, managePacks, 8);
+        packsTo = gamePanel.getChildCount();
         section("Game files");
-        release = text(TtrUpdater.release(activity), 12, MUTED); add(gamePanel, release, 6);
-        storageBox = column(); storageBox.setPadding(dp(14), dp(12), dp(14), dp(12)); storageBox.setBackground(background(0x26ffffff, 14)); add(gamePanel, storageBox, 10);
+        release = text(TtrGameFiles.release(activity, game()), 12, MUTED); add(gamePanel, release, 6);
         retry = button("Check and repair game files"); retry.setOnClickListener(v -> { TtrGameFiles.ensure(activity, true); showPanel(MAIN); }); add(gamePanel, retry, 8);
+        section("Storage");
+        add(gamePanel, text("Space each game uses on this phone. Removing a game keeps its saved accounts; it downloads again if you play it.", 12, MUTED), 2);
+        storageList = column(); add(gamePanel, storageList, 4);
         section("Help");
         Button diagnostics = button("Share diagnostics"); diagnostics.setOnClickListener(v -> shareDiagnostics()); add(gamePanel, diagnostics, 8);
         addDetailedLogging();
-        TextView about = text("TTR Mobile " + appBuild() + "\nUnofficial launcher; not made by the Toontown Rewritten team.", 12, MUTED); add(gamePanel, about, 12);
+        TextView about = text("TTR Mobile " + appBuild() + "\nUnofficial launcher; not made by the Toontown Rewritten or Corporate Clash teams.", 12, MUTED); add(gamePanel, about, 12);
         about.setOnLongClickListener(v -> { TtrDiagnostics.show(activity); return true; });
         backFooter(gamePanel, () -> showPanel(MAIN));
 
@@ -477,14 +519,16 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     }
     private void showPanel(int which) {
         if (which != ACCOUNT && panel == ACCOUNT) hideKeyboard();
+        if (which == MAIN && !TtrGame.chosen(activity)) which = CHOOSE;
         if (which != panel) hideNotice(false);
         panel = which;
         mainPanel.setVisibility(which == MAIN ? View.VISIBLE : View.GONE);
         accountPanel.setVisibility(which == ACCOUNT ? View.VISIBLE : View.GONE);
         gamePanel.setVisibility(which == SETTINGS ? View.VISIBLE : View.GONE);
+        choosePanel.setVisibility(which == CHOOSE ? View.VISIBLE : View.GONE);
         packsPanel.setVisibility(which == PACKS ? View.VISIBLE : View.GONE);
         if (which == PACKS) refreshPacks();
-        if (which == SETTINGS) refreshStorage();
+        if (which == SETTINGS) showStorage();
         changed();
     }
     /** Opens the system Files app at the pack folder (TtrPackProvider). */
@@ -622,6 +666,53 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
             .button("Delete", TtrDialog.DANGER, () -> { try { TtrPacks.delete(activity, pack); TtrPackProvider.changed(activity); } catch (Exception e) { showNotice("Unable to delete this pack."); } refreshPacks(); })
             .button("Cancel", TtrDialog.QUIET, null).show();
     }
+    private static String megabytes(long bytes) { return bytes >= 1L << 30 ? String.format(Locale.US, "%.1f GB", bytes / 1073741824.0) : Math.max(bytes >> 20, bytes > 0 ? 1 : 0) + " MB"; }
+    /** One row per game (size, and Remove for a downloaded game), then the shared Windows runtime. Sizes are measured in the background. */
+    private void showStorage() {
+        storageList.removeAllViews();
+        Map<String, TextView> sizes = new LinkedHashMap<>();
+        for (String g : TtrGame.ALL) {
+            LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(8), dp(8), dp(8)); row.setBackground(background(0x1affffff, 12));
+            LinearLayout words = column(); TextView name = text(TtrGame.fullName(g), 15, Color.WHITE); name.setTypeface(null, Typeface.BOLD); words.addView(name);
+            TextView size = text("Measuring…", 12, MUTED); words.addView(size); sizes.put(g, size);
+            row.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+            if (TtrGame.installed(activity, g) || TtrGame.location(activity, g).isDirectory()) {
+                Button remove = link("Remove"); remove.setTextColor(0xffff9c8f); remove.setOnClickListener(v -> removeGame(g)); row.addView(remove);
+            }
+            add(storageList, row, 8);
+        }
+        LinearLayout row = new LinearLayout(activity); row.setPadding(dp(14), dp(8), dp(8), dp(8)); row.setBackground(background(0x1affffff, 12));
+        LinearLayout words = column(); TextView name = text(TtrPlatform.RUNTIME + " (shared by both games)", 15, Color.WHITE); name.setTypeface(null, Typeface.BOLD); words.addView(name);
+        TextView runtime = text("Measuring…", 12, MUTED); words.addView(runtime); row.addView(words, new LinearLayout.LayoutParams(0, -2, 1)); add(storageList, row, 8);
+        new Thread(() -> {
+            Map<String, Long> used = new HashMap<>(); for (String g : TtrGame.ALL) used.put(g, TtrGame.size(activity, g));
+            long packs = TtrUsage.size(new java.io.File(TtrGame.location(activity, TtrGame.TTR), "resources"));  // part of Rewritten's files
+            long total = 0; java.io.File[] parts = activity.getFilesDir().listFiles();
+            if (parts != null) for (java.io.File f : parts) if (!f.getName().equals("ttr") && !f.getName().equals("clash")) total += TtrGame.du(f);
+            long windows = total;
+            ui.post(() -> {
+                for (String g : TtrGame.ALL) { long b = used.get(g); boolean here = TtrGame.installed(activity, g);
+                    sizes.get(g).setText(b == 0 && !here ? "Not downloaded" : megabytes(b) + (g.equals(TtrGame.TTR) && packs > 0 ? ", " + megabytes(packs) + " of it content packs" : "")
+                        + (g.equals(TtrGame.current(activity)) ? " · current game" : here ? "" : " · partly downloaded")); }
+                runtime.setText(megabytes(windows) + " · needed to play");
+            });
+        }, "ttr-storage").start();
+    }
+    private void removeGame(String g) {
+        boolean current = g.equals(TtrGame.current(activity));
+        if (current && (TtrLauncher.busy || runtimeStarting || TtrRuntime.isSessionRunning(activity))) { Toast.makeText(activity, "Close the game first.", Toast.LENGTH_LONG).show(); return; }
+        new TtrDialog(activity, "Remove " + TtrGame.fullName(g) + "?", "This deletes its game files from this phone" + (current ? ". You'll need to download it again to play." : ". Saved accounts stay; it downloads again if you play it."))
+            .button("Remove", TtrDialog.DANGER, () -> {
+                if (TtrGameFiles.working(g)) TtrGameFiles.cancel();
+                TtrDiagnostics.log(activity, "Removing " + TtrGame.name(g) + " game files.");
+                new Thread(() -> {
+                    // A running download stops first, so it can't recreate files while they are deleted.
+                    for (int i = 0; i < 400 && TtrGameFiles.working(g); i++) try { Thread.sleep(100); } catch (InterruptedException e) { return; }
+                    TtrGame.delete(activity, g);
+                    ui.post(() -> { TtrGameFiles.forget(activity, g); showStorage(); changed(); });
+                }, "ttr-remove-game").start();
+            }).button("Cancel", TtrDialog.QUIET, null).show();
+    }
     /** Windows and Linux builds share the report; older builds only have the on-screen log. */
     private void shareDiagnostics() {
         try { TtrDiagnostics.class.getMethod("share", Activity.class).invoke(null, activity); }
@@ -659,7 +750,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
             accountChoices.addView(addAccount,new LinearLayout.LayoutParams(-2,dp(64)));
             username.setText(TtrLauncher.selected);password.setText("");updateAccountStatus();
             scrollToSelected();
-            if(names.isEmpty())showPanel(ACCOUNT);
+            if(names.isEmpty()&&TtrGame.chosen(activity))showPanel(ACCOUNT);
         } catch (Exception e) { showNotice("Unable to unlock saved accounts."); }
     }
     private void selectAccount(String name){
@@ -678,7 +769,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     }
     private void updateAccountStatus() {
         try { verifiedAccounts=vault.overview();Long value=verifiedAccounts.get(TtrLauncher.selected);long time=value==null?0:value;
-            accountStatus.setText(TtrLauncher.selected.isEmpty() ? (names.isEmpty() ? "Add your Toontown Rewritten account to get started." : "Tap an account to choose it.")
+            accountStatus.setText(TtrLauncher.selected.isEmpty() ? (names.isEmpty() ? "Add your " + TtrGame.name(game()) + " account to get started." : "Tap an account to choose it.")
                 : (time == 0 ? "Login not checked yet" : "Login checked " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(time))));
             for(Map.Entry<String,Button> entry:accountButtons.entrySet()){Long verified=verifiedAccounts.get(entry.getKey());
                 entry.getValue().setText(Html.fromHtml("<b>"+Html.escapeHtml(entry.getKey())+"</b><br><small>"+(verified!=null&&verified>0?"✓ Login checked":"Not checked yet")+"</small>",Html.FROM_HTML_MODE_LEGACY));}
@@ -706,7 +797,12 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         if (TtrRuntime.isSessionRunning(activity)) { TtrRuntime.resume(activity); return; }
         if (TtrLauncher.selected.isEmpty()) { newAccount(); return; }
         if (panel != MAIN) showPanel(MAIN);
-        if (!TtrGameFiles.ready) { playQueued = !playQueued; changed(); return; }
+        if (!TtrGameFiles.ready) {
+            playQueued = !playQueued;
+            // A game that isn't downloaded yet starts downloading; Play then waits for it.
+            if (playQueued && !TtrGameFiles.busy && !TtrGame.installed(activity, game())) TtrGameFiles.download(activity);
+            changed(); return;
+        }
         playQueued = false;
         if (!TtrStorage.granted(activity)) { if (waitingStorage) return; waitingStorage = true; try { TtrStorage.request(activity); } catch (Exception e) { waitingStorage = false; showNotice("Unable to open file-access settings."); } return; }
         TtrRuntime.lastError = null; TtrLauncher.play(activity, TtrLauncher.selected);
@@ -724,6 +820,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         String error = TtrRuntime.lastError;
         if (error != null && !error.equals(shownError)) showNotice(error);
         shownError = error;
+        if (TtrGame.chosen(activity)) TtrGameFiles.ensure(activity, false); // after a game switch or a stopped download
         fileStage.setText(TtrGameFiles.message); release.setText(TtrGameFiles.release); readyRelease.setText(TtrGameFiles.release);
         String phase=TtrRuntime.phase(activity);
         boolean busy = TtrLauncher.busy || runtimeStarting || phase.equals("closing_game"), running = TtrRuntime.isSessionRunning(activity), selected = !TtrLauncher.selected.isEmpty();
@@ -743,7 +840,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         // Account page
         accountTitle.setText(selected ? TtrLauncher.selected : "Add an account");
         Long checked = verifiedAccounts.get(TtrLauncher.selected);
-        accountHint.setText(selected ? "Saved on this phone  ·  " + (checked == null || checked == 0 ? "Login not checked yet" : "Login checked " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(checked))) : "Use your Toontown Rewritten username (or email) and password. They are stored encrypted on this phone only.");
+        accountHint.setText(selected ? "Saved on this phone  ·  " + (checked == null || checked == 0 ? "Login not checked yet" : "Login checked " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(checked))) : "Use your " + TtrGame.fullName(game()) + " username" + (TtrGame.CLASH.equals(game()) ? "" : " (or email)") + " and password. They are stored encrypted on this phone only.");
         save.setEnabled(!busy);save.setVisibility(selected&&!editingPassword?View.GONE:View.VISIBLE);save.setText(selected?"Save new password":"Save account");
         changePassword.setVisibility(selected?View.VISIBLE:View.GONE);changePassword.setEnabled(!busy);changePassword.setText(editingPassword?"Keep current password":"Change password");
         verify.setVisibility(selected&&!editingPassword?View.VISIBLE:View.GONE);verify.setEnabled(!busy);
@@ -770,16 +867,27 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         runtimePanel.root.setVisibility(!launching && preparing ? View.VISIBLE : View.GONE);
         filesCard.setVisibility(!launching && !preparing && downloading ? View.VISIBLE : View.GONE);
         readyCard.setVisibility(!launching && !preparing && !downloading && !running ? View.VISIBLE : View.GONE);
-        retry.setEnabled(!TtrGameFiles.busy && !running && !TtrLauncher.playing && !runtimeStarting); cancelFiles.setVisibility(TtrGameFiles.busy ? View.VISIBLE : View.GONE); fileProgress.setVisibility(TtrGameFiles.busy ? View.VISIBLE : View.GONE);
+        retry.setEnabled(!TtrGameFiles.busy && !running && !TtrLauncher.playing && !runtimeStarting && TtrGame.installed(activity, game()));
+        downloadFiles.setVisibility(!TtrGameFiles.busy && !TtrGame.installed(activity, game()) ? View.VISIBLE : View.GONE);
+        downloadFiles.setText(TtrGame.started(activity, game()) ? "Finish downloading " + TtrGame.name(game()) : "Download " + TtrGame.name(game()) + " · " + TtrGame.downloadSize(game()));
+        username.setHint(TtrGame.CLASH.equals(game()) ? "Username" : "Username or email");
+        for (Button tab : gameTabs.values()) { tab.setEnabled(!busy && !running); tab.setAlpha(tab.isEnabled() ? 1f : .55f); } cancelFiles.setVisibility(TtrGameFiles.busy ? View.VISIBLE : View.GONE); fileProgress.setVisibility(TtrGameFiles.busy ? View.VISIBLE : View.GONE);
         fileProgress.setIndeterminate(TtrGameFiles.percent<0);if(TtrGameFiles.percent>=0)fileProgress.setProgress(TtrGameFiles.percent);
         authProgress.setVisibility(TtrLauncher.busy ? View.VISIBLE : View.GONE); cancelAuth.setVisibility(TtrLauncher.busy ? View.VISIBLE : View.GONE);
         if (previousBusy && !TtrLauncher.busy) updateAccountStatus(); previousBusy = TtrLauncher.busy;
         if (TtrLauncher.challenge != null && shownChallenge != TtrLauncher.challengeId) {
-            shownChallenge = TtrLauncher.challengeId; if (codeDialog != null) codeDialog.dismiss(); EditText code = field("Verification code", false);
+            shownChallenge = TtrLauncher.challengeId; if (codeDialog != null) codeDialog.dismiss();
+            if (TtrLauncher.challengeApproval) // Corporate Clash ToonStep: approve by email, then continue
+                codeDialog = new TtrDialog(activity, "Approve this sign-in", Html.fromHtml(TtrLauncher.challenge, Html.FROM_HTML_MODE_LEGACY))
+                    .button("Continue", TtrDialog.PRIMARY, () -> TtrLauncher.submit("approved"))
+                    .button("Cancel", TtrDialog.QUIET, () -> TtrLauncher.cancel(activity)).onCancel(() -> TtrLauncher.cancel(activity)).show();
+            else {
+            EditText code = field("Verification code", false);
             codeDialog = new TtrDialog(activity, "Enter your verification code", Html.fromHtml(TtrLauncher.challenge, Html.FROM_HTML_MODE_LEGACY)).view(code)
                 .buttonIf("Continue", TtrDialog.PRIMARY, () -> { if (code.length() == 0) { code.setError("Enter the verification code."); return false; } TtrLauncher.submit(code.getText().toString()); code.setText(""); return true; })
                 .button("Cancel", TtrDialog.QUIET, () -> TtrLauncher.cancel(activity)).onCancel(() -> TtrLauncher.cancel(activity)).show();
             code.requestFocus(); codeDialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+            }
         }
         if (TtrLauncher.consumeLaunch()) {
             runtimeStarting = true; TtrDiagnostics.beginAttempt(activity);
@@ -810,7 +918,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         if (codeDialog != null) { codeDialog.dismiss(); codeDialog = null; shownChallenge = -1; }
     }
     /** Back from the account or settings page returns to the main page; false when already there. */
-    public boolean back() { if (packsDone != null) { leavePacks(); return true; } if (panel == MAIN || view.getVisibility() != View.VISIBLE) return false; if (panel == ACCOUNT) leaveAccountPage(); else if (panel == PACKS) leavePacks(); else showPanel(MAIN); return true; }
+    public boolean back() { if (packsDone != null) { leavePacks(); return true; } if (panel == MAIN || panel == CHOOSE || view.getVisibility() != View.VISIBLE) return false; if (panel == ACCOUNT) leaveAccountPage(); else if (panel == PACKS) leavePacks(); else showPanel(MAIN); return true; }
     public void resize() {
         ViewGroup.LayoutParams p = card.getLayoutParams(); p.width = cardWidth(); card.setLayoutParams(p); notice.setMaxWidth(cardWidth());
     }

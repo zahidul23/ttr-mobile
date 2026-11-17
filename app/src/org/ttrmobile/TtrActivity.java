@@ -20,6 +20,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         public void cursor(float dx,float dy){if(!cursorMode)useCursor();display.nudgeCursor(dx,dy);}
         public void click(boolean down){display.mouseButton(1,down);}
         public int gameHeight(){return display.cursorAreaHeight;}
+        public void chat(){if(!ime.isOpen())keyboard();}
     });
     private final Set<Integer> pressed=new HashSet<>();
     /** Screens alive in this process (an Android recreate briefly has two); 0 after a close. */
@@ -91,7 +92,8 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         controls=new TtrTouchControls(this,this);
         cursorMode=getSharedPreferences("ttr-input",0).getBoolean("cursor-mode",false);display.setCursorMode(cursorMode);TtrRuntime.cursorVisible=cursorMode;
         controls.addPointerToggle(this::togglePointer,cursorMode);controls.addGroupsButton(this::openGroups);controls.setVisibility(View.GONE);root.addView(controls,new FrameLayout.LayoutParams(-1,-1));
-        ime=new TtrImeInput(this,new TtrImeInput.Output(){public void text(String s){display.text(s);}public void key(int code){display.key(code,true);display.key(code,false);}});
+        ime=new TtrImeInput(this,new TtrImeInput.Output(){public void text(String s){chat(()->display.text(s));}
+            public void key(int code){chat(()->tap(code));if(clash&&code==KeyEvent.KEYCODE_ENTER)focusChat(300);}});
         root.addView(ime,new FrameLayout.LayoutParams(1,1));
         login=new TtrLoginScreen(this,true);root.addView(login.view,new FrameLayout.LayoutParams(-1,-1));setContentView(safe);setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         root.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(r-l!=or-ol||b-t!=ob-ot){release();closeKeyboard();layoutDisplay();login.resize();}});
@@ -103,7 +105,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     public void attachDisplay(int fd){display.attachFd(fd);layoutDisplay();}
     public void refreshDisplay(){release();closeKeyboard();layoutDisplay();}
     /** In the game the phone keyboard covers the bottom of the screen; nothing moves or resizes. */
-    public void showClient(){getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);TtrSafeArea.setFullscreen(this,safe,controls,true);login.view.setVisibility(View.GONE);controls.setVisibility(isInPictureInPictureMode()?View.GONE:View.VISIBLE);showPointer();layoutDisplay();}
+    public void showClient(){clash=TtrGame.CLASH.equals(TtrGame.active(this));gamepad.clash=clash;controls.setGroupsVisible(!clash);controls.setClash(clash);getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);TtrSafeArea.setFullscreen(this,safe,controls,true);login.view.setVisibility(View.GONE);controls.setVisibility(isInPictureInPictureMode()?View.GONE:View.VISIBLE);showPointer();layoutDisplay();}
     /** Developer capture of the game surface only; never captures account UI. */
     void captureGame(){
         java.io.File cache=getExternalCacheDir();
@@ -134,8 +136,12 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         TtrViewport.renderWidth=rw;TtrViewport.renderHeight=rh;TtrViewport.rootWidth=rootW;
         FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)display.getLayoutParams();p.height=gh;p.width=(int)Math.round((double)w*rootW/rw);
         display.cursorAreaWidth=rw;display.cursorAreaHeight=rh;display.setLayoutParams(p);display.resize(rootW,rh);TtrRuntime.resize();updatePip();}
+    /** Corporate Clash is the running game (its default keys differ from TTR's). */
+    private boolean clash;
     public void bind(String binding,boolean down){int code;
-        switch(binding){case "KEY_UP":code=19;break;case "KEY_DOWN":code=20;break;case "KEY_LEFT":code=21;break;case "KEY_RIGHT":code=22;break;case "KEY_CTRL_L":code=113;break;case "KEY_DEL":code=112;break;case "KEY_HOME":code=122;break;case "KEY_END":code=123;break;case "KEY_ALT_L":code=57;break;case "KEY_TAB":code=61;break;default:return;}
+        if(clash)switch(binding){ // Clash: Throw = F (hold for power), Gags = Q, Tasks = E; its Sprint button sends Shift itself
+            case "KEY_DEL":binding="KEY_F";break;case "KEY_HOME":binding="KEY_Q";break;case "KEY_END":binding="KEY_E";break;}
+        switch(binding){case "KEY_F":code=KeyEvent.KEYCODE_F;break;case "KEY_Q":code=KeyEvent.KEYCODE_Q;break;case "KEY_E":code=KeyEvent.KEYCODE_E;break;case "KEY_SHIFT_L":code=KeyEvent.KEYCODE_SHIFT_LEFT;break;case "KEY_UP":code=19;break;case "KEY_DOWN":code=20;break;case "KEY_LEFT":code=21;break;case "KEY_RIGHT":code=22;break;case "KEY_CTRL_L":code=113;break;case "KEY_DEL":code=112;break;case "KEY_HOME":code=122;break;case "KEY_END":code=123;break;case "KEY_ALT_L":code=57;break;case "KEY_TAB":code=61;break;default:return;}
         if(down?pressed.add(code):pressed.remove(code))display.key(code,down);
     }
     /** Touches the controls pass on (taps around the joystick, a second finger while moving) go to the game view. */
@@ -145,7 +151,22 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         display.dispatchTouchEvent(e);return true;
     }
     /** The Keyboard button opens or closes the phone's keyboard. */
-    public void keyboard(){if(ime.isOpen())ime.hide();else ime.show();}
+    public void keyboard(){if(ime.isOpen())ime.hide();else{ime.show();if(clash)focusChat(0);}}
+    /**
+     * Corporate Clash reads letters as hotkeys (E = Tasks, F = Throw...) unless its chat box has focus, and its chat
+     * hotkey T only takes effect on the game's next frame. So before a message: T, a pause, then Backspace (which
+     * removes the "t" if the box already had focus), and only then the typed text, held back meanwhile.
+     */
+    private java.util.List<Runnable> chatQueue;
+    private final Runnable chatReady=()->{tap(KeyEvent.KEYCODE_DEL);java.util.List<Runnable> q=chatQueue;chatQueue=null;if(q!=null)for(Runnable r:q)r.run();};
+    private final Runnable chatFocus=()->{tap(KeyEvent.KEYCODE_T);ui.postDelayed(chatReady,300);};
+    private void focusChat(long delay){
+        ui.removeCallbacks(chatFocus);ui.removeCallbacks(chatReady);
+        if(chatQueue==null)chatQueue=new java.util.ArrayList<>();
+        ui.postDelayed(chatFocus,delay);
+    }
+    private void chat(Runnable r){if(chatQueue!=null)chatQueue.add(r);else r.run();}
+    private void tap(int code){display.key(code,true);display.key(code,false);}
     /** Tap mode: touches click where they land. Cursor mode: the screen is a trackpad for the game's own cursor. */
     private void togglePointer(){release();cursorMode=!cursorMode;getSharedPreferences("ttr-input",0).edit().putBoolean("cursor-mode",cursorMode).apply();
         display.setCursorMode(cursorMode);controls.setCursorMode(cursorMode);TtrRuntime.cursorVisible=cursorMode;showPointer();}

@@ -22,7 +22,10 @@ public final class TtrAccounts {
     private final String alias;
     private static final byte[] AAD = "TTR Mobile accounts v1".getBytes(StandardCharsets.UTF_8);
     private final AtomicFile file;
-    public TtrAccounts(Context c) { this(c, "accounts.v1", "org.ttrmobile.accounts.v1"); }
+    /** Accounts for the game picked on the launcher screen. */
+    public TtrAccounts(Context c) { this(c, TtrGame.active(c)); }
+    /** Each game keeps its own list; both use the same Keystore key. */
+    public TtrAccounts(Context c, String game) { this(c, TtrGame.CLASH.equals(game) ? "accounts-clash.v1" : "accounts.v1", "org.ttrmobile.accounts.v1"); }
     TtrAccounts(Context c, String filename, String keyAlias) { file = new AtomicFile(new File(c.getNoBackupFilesDir(), filename)); alias = keyAlias; }
     private SecretKey key() throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null);
@@ -97,6 +100,20 @@ public final class TtrAccounts {
             if (username.equals(account.getString("username")) && password.equals(account.getString("password"))) account.put("verified", System.currentTimeMillis());
         }
         write(all);
+    }
+    /** Corporate Clash launcher token saved with the account ("" when none). */
+    public synchronized String token(String username) throws Exception {
+        JSONArray all = read(); for (int i = 0; i < all.length(); i++) if (username.equals(all.getJSONObject(i).getString("username"))) return all.getJSONObject(i).optString("token", ""); return "";
+    }
+    public synchronized void setToken(String username, String token) throws Exception {
+        JSONArray all = read(); boolean changed = false;
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject account = all.getJSONObject(i);
+            if (!username.equals(account.getString("username"))) continue;
+            if (token == null || token.isEmpty()) { if (account.has("token")) { account.remove("token"); changed = true; } }
+            else if (!token.equals(account.optString("token"))) { account.put("token", token); changed = true; }
+        }
+        if (changed) write(all);
     }
     public synchronized void remove(String username) throws Exception {
         JSONArray existing = read(), result = new JSONArray();

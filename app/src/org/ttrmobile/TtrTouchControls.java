@@ -36,16 +36,21 @@ public final class TtrTouchControls extends FrameLayout {
     /** Landscape: the small button right of Keyboard that tucks these controls away and brings them back. */
     private final Tuck tuck;
     /** Controls that tuck away; Keyboard, the Tap/Cursor switch and Groups always stay. */
-    private static final Set<String> TUCKED = new HashSet<>(Arrays.asList("Move", "Jump", "Throw", "Map", "Gags", "Tasks", "Camera"));
+    private static final Set<String> TUCKED = new HashSet<>(Arrays.asList("Move", "Jump", "Throw", "Sprint", "Map", "Gags", "Tasks", "Camera"));
     private boolean tucked, controller;
+    /** Corporate Clash: Sprint below Throw and Jump instead of the Map button (TtrControlLayout). */
+    private boolean clash;
     /** Button backgrounds are see-through so the game shows behind them; labels stay opaque. */
     private static final int FILL_ALPHA = 0x70;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     public TtrTouchControls(Context c, Output output) {
         super(c); this.output = output; setWillNotDraw(false); setMotionEventSplittingEnabled(true);
+        // A controller or key press takes Android out of touch mode; the buttons are touch-only, so no focus box on them.
+        setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
         joystick = new Joystick(); addView(joystick, new LayoutParams(1, 1));
         button("Jump", "KEY_CTRL_L", 0xa3b3a524); button("Throw", "KEY_DEL", 0xb5bb7136);
         button("Gags", "KEY_HOME", 0xb52b837b); button("Tasks", "KEY_END", 0xb53d7794); button("Map", "KEY_ALT_L", 0xb5705ca0);
+        button("Sprint", "KEY_SHIFT_L", 0xb5705ca0); findViewWithTag("Sprint").setVisibility(GONE);
         View keyboard = new KeyboardIcon(); keyboard.setTag("Keyboard"); keyboard.setContentDescription("Keyboard");
         keyboard.setOnClickListener(v -> { tick(v); output.keyboard(); }); addView(keyboard, new LayoutParams(1, 1));
         button("Camera", "KEY_TAB", 0xb5476a8c); // Tab cycles TTR's camera angles
@@ -95,9 +100,9 @@ public final class TtrTouchControls extends FrameLayout {
         float density = getResources().getDisplayMetrics().density;
         List<View> views = new ArrayList<>(); List<float[]> centres = new ArrayList<>();
         for (int i = 0; i < getChildCount(); i++) {
-            View v = getChildAt(i); if (!TUCKED.contains(String.valueOf(v.getTag()))) continue;
+            View v = getChildAt(i); if (!TUCKED.contains(String.valueOf(v.getTag())) || offForGame(v)) continue;
             float[] c;
-            if (v == joystick) { int[] j = TtrControlLayout.joystick(w, h, density); c = new float[]{j[0], j[1]}; }
+            if (v == joystick) { int[] j = TtrControlLayout.joystick(w, h, density, clash); c = new float[]{j[0], j[1]}; }
             else c = new float[]{v.getLeft() + v.getWidth() / 2f, v.getTop() + v.getHeight() / 2f};
             views.add(v); centres.add(c);
         }
@@ -144,6 +149,15 @@ public final class TtrTouchControls extends FrameLayout {
         b.setBackground(pill(0xb5705ca0));b.setClickable(true);b.setOnClickListener(v->{tick(v);open.run();});
         addView(b,new LayoutParams(1,1));
     }
+    /** Corporate Clash has no use for the Map button; Sprint takes a place below Throw and Jump instead (TtrActivity sends Clash's keys). */
+    public void setClash(boolean clash){
+        this.clash=clash;findViewWithTag("Map").setVisibility(clash?GONE:VISIBLE);findViewWithTag("Sprint").setVisibility(clash?VISIBLE:GONE);
+        requestLayout();post(()->applyTuck(false));
+    }
+    /** The one of Map and Sprint the running game doesn't use. */
+    private boolean offForGame(View v){return (clash?"Map":"Sprint").equals(v.getTag());}
+    /** Groups (ToonHQ) is for Toontown Rewritten only. */
+    public void setGroupsVisible(boolean visible){View b=findViewWithTag("Groups");if(b!=null)b.setVisibility(visible?VISIBLE:GONE);}
     public void setCursorMode(boolean cursorMode){
         this.cursorMode=cursorMode;
         if(pointerToggle==null)return;
@@ -215,13 +229,13 @@ public final class TtrTouchControls extends FrameLayout {
         int w=MeasureSpec.getSize(widthSpec), h=MeasureSpec.getSize(heightSpec);
         setMeasuredDimension(w,h);
         for(int i=0;i<getChildCount();i++) {
-            View child=getChildAt(i); int[] b=TtrControlLayout.bounds(String.valueOf(child.getTag()),w,h,getResources().getDisplayMetrics().density);
+            View child=getChildAt(i); int[] b=TtrControlLayout.bounds(String.valueOf(child.getTag()),w,h,getResources().getDisplayMetrics().density,clash);
             child.measure(MeasureSpec.makeMeasureSpec(b[2],MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(b[3],MeasureSpec.EXACTLY));
         }
     }
     @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom) {
         for(int i=0;i<getChildCount();i++) {
-            View child=getChildAt(i); int[] b=TtrControlLayout.bounds(String.valueOf(child.getTag()),right-left,bottom-top,getResources().getDisplayMetrics().density);
+            View child=getChildAt(i); int[] b=TtrControlLayout.bounds(String.valueOf(child.getTag()),right-left,bottom-top,getResources().getDisplayMetrics().density,clash);
             child.layout(b[0],b[1],b[0]+b[2],b[1]+b[3]);
         }
     }
@@ -294,7 +308,7 @@ public final class TtrTouchControls extends FrameLayout {
         Joystick() { super(TtrTouchControls.this.getContext()); setTag("Move"); setContentDescription("Movement joystick"); }
         /** Resting {x, y, radius} in this view's coordinates. */
         private int[] rest() {
-            int[] j = TtrControlLayout.joystick(TtrTouchControls.this.getWidth(), TtrTouchControls.this.getHeight(), getResources().getDisplayMetrics().density);
+            int[] j = TtrControlLayout.joystick(TtrTouchControls.this.getWidth(), TtrTouchControls.this.getHeight(), getResources().getDisplayMetrics().density, clash);
             return new int[]{j[0] - getLeft(), j[1] - getTop(), j[2]};
         }
         @Override protected void onDraw(Canvas c) {

@@ -163,7 +163,8 @@ static BOOL printable(const char *s) {
     for (; *s; s++) if ((unsigned char)*s < 33 || (unsigned char)*s > 126) return FALSE;
     return TRUE;
 }
-typedef struct { wchar_t server[512], cookie[8193], game[32768]; } game_session;
+/* clash: Corporate Clash (CorporateClash.exe, TT_* variables, LAUNCHER_USER); otherwise Toontown Rewritten. */
+typedef struct { wchar_t server[512], cookie[8193], game[32768], user[256]; BOOL clash; } game_session;
 static BOOL read_session(game_session *session) {
     wchar_t path[32768]; swprintf(path, 32768, L"%ls\\session.bin", folder);
     char data[24576] = {0}; FILE *f = _wfopen(path, L"rb");
@@ -171,11 +172,15 @@ static BOOL read_session(game_session *session) {
     size_t n = fread(data, 1, sizeof(data) - 1, f); BOOL too_long = fgetc(f) != EOF; fclose(f);
     /* Consume before parsing or spawning: a crash/retry cannot replay this file. */
     if (!DeleteFileW(path) || too_long || !n || memchr(data, 0, n)) { SecureZeroMemory(data, sizeof(data)); return FALSE; }
-    char *lines[5], *p = data; BOOL ok = TRUE;
-    for (int i = 0; i < 5; i++) { lines[i] = p; char *end = strchr(p, '\n'); if (!end) { ok = FALSE; break; } *end = 0; p = end + 1; }
+    /* "TTR4": header, expiry, server, cookie, game folder. "CCG1": the same, then the username. */
+    session->clash = !strncmp(data, "CCG1\n", 5);
+    int count = session->clash ? 6 : 5;
+    char *lines[6], *p = data; BOOL ok = TRUE;
+    for (int i = 0; i < count; i++) { lines[i] = p; char *end = strchr(p, '\n'); if (!end) { ok = FALSE; break; } *end = 0; p = end + 1; }
+    if (ok && session->clash) ok = strlen(lines[5]) < 255 && printable(lines[5]) && utf8(lines[5], session->user, 256);
     if (ok) {
         char *end = NULL; long long expiry = strtoll(lines[1], &end, 10); long long now = (long long)time(NULL);
-        ok = !strcmp(lines[0], "TTR4") && !*p && end != lines[1] && !*end && expiry >= now && expiry <= now + 300
+        ok = !strcmp(lines[0], session->clash ? "CCG1" : "TTR4") && !*p && end != lines[1] && !*end && expiry >= now && expiry <= now + 300
             && strlen(lines[2]) < 512 && printable(lines[2]) && printable(lines[3])
             && !strchr(lines[4], '\r') && strlen(lines[4]) > 3
             && utf8(lines[2], session->server, 512) && utf8(lines[3], session->cookie, 8193) && utf8(lines[4], session->game, 32768);
@@ -188,12 +193,20 @@ static DWORD run_game(void) {
     if (!session) return fail("session_invalid", ERROR_OUTOFMEMORY);
     if (!read_session(session)) { free(session); return fail("session_invalid", ERROR_INVALID_DATA); }
     close_request(); /* discard an old request before starting a new owned tree */
-    wchar_t exe[32768]; swprintf(exe, 32768, L"%ls\\TTREngine64.exe", session->game);
+    wchar_t exe[32768]; swprintf(exe, 32768, session->clash ? L"%ls\\CorporateClash.exe" : L"%ls\\TTREngine64.exe", session->game);
     status("starting_game", 0);
-    BOOL configured = SetEnvironmentVariableW(L"TTR_GAMESERVER", session->server) && SetEnvironmentVariableW(L"TTR_PLAYCOOKIE", session->cookie);
+    /* The variables each game's own launcher sets; cleared again once started. */
+    const wchar_t *server_var = session->clash ? L"TT_GAMESERVER" : L"TTR_GAMESERVER", *cookie_var = session->clash ? L"TT_PLAYCOOKIE" : L"TTR_PLAYCOOKIE";
+    BOOL configured = SetEnvironmentVariableW(server_var, session->server) && SetEnvironmentVariableW(cookie_var, session->cookie);
+    /* Corporate Clash is 147 MB of plain code: FEX's disk cache saves translating it again on every launch (title
+       screen about 9 s sooner on a Moto G Stylus). Rewritten is unpacked in memory at each start, so it gains nothing. */
+    if (configured && session->clash) configured = SetEnvironmentVariableW(L"LAUNCHER_USER", session->user)
+        && SetEnvironmentVariableW(L"REALM", L"production") && SetEnvironmentVariableW(L"SENTRY_ENVIRONMENT", L"production")
+        && SetEnvironmentVariableW(L"FEX_DISKCACHE", L"1");
     PROCESS_INFORMATION pi; BOOL started = configured && start(exe, L"", session->game, &pi);
     DWORD error = started ? 0 : GetLastError();
-    SetEnvironmentVariableW(L"TTR_GAMESERVER", NULL); SetEnvironmentVariableW(L"TTR_PLAYCOOKIE", NULL);
+    SetEnvironmentVariableW(server_var, NULL); SetEnvironmentVariableW(cookie_var, NULL);
+    if (session->clash) { SetEnvironmentVariableW(L"LAUNCHER_USER", NULL); SetEnvironmentVariableW(L"REALM", NULL); SetEnvironmentVariableW(L"SENTRY_ENVIRONMENT", NULL); SetEnvironmentVariableW(L"FEX_DISKCACHE", NULL); }
     SecureZeroMemory(session, sizeof(*session)); free(session);
     if (!started) return fail("game_start_failed", error);
     status("client_started",0);

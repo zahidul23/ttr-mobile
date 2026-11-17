@@ -14,6 +14,24 @@ public final class TtrPaths {
             throw new IOException("The update path leaves the game directory.");
         return result;
     }
+    /** A manifest path with folders ("resources/default/phase_3.mf"): each part checked like a filename, at most 6 deep. */
+    public static File nested(File root, String path) throws IOException {
+        String[] parts = path.split("/", -1);
+        if (parts.length > 6) throw new IOException("The update manifest contains an unsafe filename.");
+        File parent = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            if (!parts[i].matches("[A-Za-z0-9_.-]{1,64}") || parts[i].equals(".") || parts[i].equals("..") || parts[i].startsWith("."))
+                throw new IOException("The update manifest contains an unsafe filename.");
+            parent = new File(parent, parts[i]);
+        }
+        File result = new File(parent, parts[parts.length - 1]);
+        if (parts[parts.length - 1].startsWith(".")) throw new IOException("The update manifest contains an unsafe filename.");
+        if (!parts[parts.length - 1].matches("[A-Za-z0-9_ .-]{1,180}") || parts[parts.length - 1].equals(".."))
+            throw new IOException("The update manifest contains an unsafe filename.");
+        String base = root.getCanonicalPath() + File.separator;
+        if (!result.getCanonicalPath().startsWith(base)) throw new IOException("The update path leaves the game directory.");
+        return result;
+    }
     public static String sessionValue(String value) throws IOException {
         if (value == null || value.isEmpty() || value.length() > 8192)
             throw new IOException("The login server returned an invalid session.");

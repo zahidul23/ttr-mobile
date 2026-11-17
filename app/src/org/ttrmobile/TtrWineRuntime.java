@@ -12,7 +12,8 @@ import java.util.Locale;
 /**
  * Installs the Windows runtime from public, pinned sources (no BannerHub/GameHub servers):
  *  - Wine: GameNative's open-source Proton 11 ARM64EC build for Android (GitHub releases).
- *  - FEX: the official FEX x86/x86-64 emulator DLLs for Wine (FEX's Ubuntu PPA package, bundled in the APK).
+ *  - FEX: the official FEX x86/x86-64 emulator DLLs for Wine (FEX's Ubuntu PPA package, bundled in the APK), then
+ *    its emulator DLL is replaced by our build of the same version (see {@link #useOwnEmulator}).
  * Both are verified by SHA-256, unpacked into a staging folder, debug data is removed,
  * and the folder is renamed into place only when complete.
  */
@@ -88,6 +89,27 @@ final class TtrWineRuntime {
         } finally {
             TtrStartupProgress.setupBytes = TtrStartupProgress.setupTotalBytes = -1; TtrStartupProgress.setupSpeed = null;
         }
+    }
+
+    /**
+     * Puts the app's own emulator build in place of the downloaded one: FEX 2610 with one addition that skips
+     * buffered data in bulk where MSVC's istream::ignore takes it a byte at a time (tools/fex). Corporate Clash
+     * walks 1.76 GB of resource files that way at every start: 34 s before its first log line, 11 s with this.
+     * Code translated by another build is dropped, since FEX's disk cache would keep using it.
+     */
+    static synchronized void useOwnEmulator(Context c) throws Exception {
+        String want; try (InputStream in = c.getAssets().open("runtime/fex.sha256")) { want = new BufferedReader(new InputStreamReader(in, StandardCharsets.US_ASCII)).readLine().trim(); }
+        File dll = new File(directory(c), "lib/wine/aarch64-windows/libarm64ecfex.dll"), marker = new File(directory(c), ".ttr-fex");
+        // An older install can hold its own copy in the prefix; Windows must load the runtime's.
+        File copy = new File(TtrRuntime.prefix(c), "drive_c/windows/system32/libarm64ecfex.dll");
+        if (copy.isFile() && !Files.isSymbolicLink(copy.toPath())) { Files.delete(copy.toPath()); Files.createSymbolicLink(copy.toPath(), dll.toPath()); }
+        if (dll.isFile() && marker.isFile() && want.equals(new String(Files.readAllBytes(marker.toPath()), StandardCharsets.US_ASCII).trim())) return;
+        File tmp = new File(dll.getParentFile(), "libarm64ecfex.dll.new");
+        try (InputStream in = c.getAssets().open("runtime/libarm64ecfex.dll")) { Files.copy(in, tmp.toPath(), StandardCopyOption.REPLACE_EXISTING); }
+        if (!want.equals(hash(tmp))) { tmp.delete(); throw new IOException("The app's x86 emulator failed verification."); }
+        Files.move(tmp.toPath(), dll.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        deleteTree(new File(c.getCacheDir(), "fex-cache"));
+        Files.write(marker.toPath(), want.getBytes(StandardCharsets.US_ASCII));
     }
 
     /** Downloads and unpacks the runtime again (used when its one-time prefix pack is needed again). */

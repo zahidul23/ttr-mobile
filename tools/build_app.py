@@ -15,7 +15,7 @@ from pathlib import Path
 from common import ROOT, TOOLS, NDK_BIN, find, run
 
 BUILD = ROOT / 'build/app'
-VERSION = '0.8.6'
+VERSION = '0.9.0'
 FEX_DEB = 'fex-emu-wine_2610-1~n_arm64.deb'
 FEX_SHA256 = 'edd6a8266f82199b1323549d64d75295b44773330dc61a44e3e5d9529bd100ba'
 PACKAGE = 'help.toontown.ttrmobile'
@@ -61,13 +61,21 @@ def main():
              ('make_icon.py', ROOT / 'build/app-res/mipmap-xxxhdpi/ic_launcher.png')]
     for script, artifact in steps:
         if not artifact.is_file(): run(sys.executable, ROOT / 'tools' / script)
+    # The bootstrap is ours and changes with the app (a stale one rejects newer launch requests), so it is rebuilt
+    # whenever its source is newer.
+    if (ROOT / 'windows/bootstrap.c').stat().st_mtime > (ROOT / 'build/TtrBootstrap.exe').stat().st_mtime:
+        run(sys.executable, ROOT / 'tools/build_bootstrap_exe.py')
     prerequisites = {'xkb': ROOT / 'build/xkb/xkb.zip', 'bootstrap': ROOT / 'build/TtrBootstrap.exe',
                      'x11': ROOT / 'build/linux-x11/native/libXlorie.so', 'gl4es': ROOT / 'build/linux-graphics/source/lib/libGL.so.1',
                      'bzip2': ROOT / 'build/native/libttrbz2.so',
                      # OpenGL-on-Vulkan stack (Mesa zink + Vulkan loader), built by tools/vulkan_stack/build.sh in WSL
-                     'vulkan': ROOT / 'build/vulkan-stack/vulkan-stack.tar.zst'}
+                     'vulkan': ROOT / 'build/vulkan-stack/vulkan-stack.tar.zst',
+                     # FEX 2610 with our istream::ignore fast path, built by tools/fex/build.sh in WSL
+                     'fex': ROOT / 'build/fex/libarm64ecfex.dll'}
     if not prerequisites['vulkan'].is_file():
         raise RuntimeError('Build the Vulkan graphics stack first, in WSL Ubuntu 24.04: bash tools/vulkan_stack/build.sh (see README)')
+    if not prerequisites['fex'].is_file():
+        raise RuntimeError('Build our FEX first, in WSL Ubuntu 24.04: bash tools/fex/build.sh')
     out = BUILD / 'native-build'; native(clang, out)
     classes = BUILD / 'classes'; shutil.rmtree(classes, ignore_errors=True); classes.mkdir()
     sources = list((ROOT / 'app/src').rglob('*.java'))
@@ -124,6 +132,8 @@ def main():
         z.write(fex, 'assets/runtime/fex.deb')
         z.write(prerequisites['vulkan'], 'assets/runtime/vulkan-stack.tar.zst')
         z.writestr('assets/runtime/vulkan-stack.sha256', hashlib.sha256(prerequisites['vulkan'].read_bytes()).hexdigest())
+        z.write(prerequisites['fex'], 'assets/runtime/libarm64ecfex.dll')
+        z.writestr('assets/runtime/fex.sha256', hashlib.sha256(prerequisites['fex'].read_bytes()).hexdigest())
         z.write(prerequisites['bootstrap'], 'assets/ttr/TtrBootstrap.exe')
         z.writestr('assets/runtime/components.json', json.dumps(inventory, indent=2))
         if args.dev_server: z.writestr('assets/dev-server.txt', args.dev_server)

@@ -11,7 +11,10 @@ import android.view.MotionEvent;
  * left stick = move (arrows), right stick = cursor, R3 (press the right stick) or either trigger = click,
  * A = Jump (Ctrl), B = Throw (Delete), X = Map (Alt), Y = Shticker Book (F8), Start = Options (Shift+Esc),
  * LB = camera angle (Tab), RB = reverse camera angle (Shift+Tab),
- * D-pad up/down = look up/down (Page Up/Down), D-pad left/right = Gags/Tasks (Home/End, held).
+ * D-pad up/down = look up/down (Page Up/Down), D-pad left/right = Gags/Tasks (Home/End, held),
+ * View (Select) = chat with the phone's keyboard.
+ * Corporate Clash uses its own default keys: B = Throw (F, hold for power), X = Sprint (Shift, held),
+ * Y = Shticker Book (Esc), Start = advance NPC dialog (X), D-pad left/right = Gags/Tasks (Q/E, held).
  */
 final class TtrGamepad {
     interface Output {
@@ -23,6 +26,8 @@ final class TtrGamepad {
         void click(boolean down);
         /** Game height in pixels, for cursor speed. */
         int gameHeight();
+        /** Opens the phone's keyboard for chat. */
+        void chat();
     }
     private static final int SHIFT = KeyEvent.KEYCODE_SHIFT_LEFT;
     private final Output out;
@@ -33,6 +38,8 @@ final class TtrGamepad {
     private float aimX, aimY;
     private long lastFrame;
     private boolean aiming;
+    /** Corporate Clash is running: its keys differ from TTR's. */
+    volatile boolean clash;
 
     TtrGamepad(Output out) { this.out = out; }
 
@@ -42,7 +49,15 @@ final class TtrGamepad {
     }
 
     /** The game keys for a controller button, or null when it does nothing. */
-    private static int[] keys(int button) {
+    private int[] keys(int button) {
+        if (clash) switch (button) {
+            case KeyEvent.KEYCODE_BUTTON_B: return new int[]{KeyEvent.KEYCODE_F};                     // Throw (hold for power)
+            case KeyEvent.KEYCODE_BUTTON_X: return new int[]{SHIFT};                                  // Sprint
+            case KeyEvent.KEYCODE_BUTTON_Y: return new int[]{KeyEvent.KEYCODE_ESCAPE};                // Shticker Book
+            case KeyEvent.KEYCODE_BUTTON_START: return new int[]{KeyEvent.KEYCODE_X};                 // advance NPC dialog
+            case KeyEvent.KEYCODE_DPAD_LEFT: return new int[]{KeyEvent.KEYCODE_Q};                    // Gags
+            case KeyEvent.KEYCODE_DPAD_RIGHT: return new int[]{KeyEvent.KEYCODE_E};                   // Tasks
+        }
         switch (button) {
             case KeyEvent.KEYCODE_BUTTON_A: return new int[]{KeyEvent.KEYCODE_CTRL_LEFT};             // Jump
             case KeyEvent.KEYCODE_BUTTON_B: return new int[]{KeyEvent.KEYCODE_FORWARD_DEL};           // Throw
@@ -69,9 +84,10 @@ final class TtrGamepad {
         if (code == KeyEvent.KEYCODE_BUTTON_THUMBR) { click("R3", down); return true; }
         if (code == KeyEvent.KEYCODE_BUTTON_L2) { click("LT", down); return true; } // triggers sent as buttons
         if (code == KeyEvent.KEYCODE_BUTTON_R2) { click("RT", down); return true; }
+        if (code == KeyEvent.KEYCODE_BUTTON_SELECT) { if (down) out.chat(); return true; }
         int[] k = keys(code);
         if (k != null) set("button" + code, k, down);
-        return true; // unused buttons (L3, Select) are kept from reaching the game as stray keys
+        return true; // unused buttons (L3) are kept from reaching the game as stray keys
     }
 
     /** Sticks and the D-pad hat; true when handled (which also stops Android turning them into arrow keys). */

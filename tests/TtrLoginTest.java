@@ -53,6 +53,11 @@ public final class TtrLoginTest {
         for (String name : Arrays.asList("../escape", "..", ".", "C:\\evil", "/absolute", "a/b", "a\\b", "control\n")) {
             try { TtrPaths.child(root, name); throw new AssertionError(name); } catch (IOException expected) { }
         }
-        System.out.println("PASS: credentials/challenge/queue request fields, rotating challenge tokens, retained queue token, cancellation, failures, session/server validation, path confinement");
+        // Corporate Clash manifest paths have folders.
+        for (String name : Arrays.asList("CorporateClash.exe", "config/general.prc", "resources/default/phase_5.5_maps.mf"))
+            check(TtrPaths.nested(root, name).getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator));
+        for (String name : Arrays.asList("../escape", "a/../../escape", "..", "a/..", "/absolute", "a//b", "a\\b", ".hidden/x", "a/.ttr-staging", "a/b/c/d/e/f/g", "C:/evil", "a/b\nc", ""))
+            try { TtrPaths.nested(root, name); throw new AssertionError(name); } catch (IOException expected) { }
+        System.out.println("PASS: credentials/challenge/queue request fields, rotating challenge tokens, retained queue token, cancellation, failures, session/server validation, path confinement, nested Clash paths");
     }
 }

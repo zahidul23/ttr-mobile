@@ -20,6 +20,27 @@ public final class TtrGameSettings {
     public static final String[][] VOLUMES = {{"music-volume", "Music"}, {"sfx-volume", "Sound effects"}, {"toon-chat-sfx-volume", "Toon chat sounds"}};
     public static android.content.SharedPreferences audio(Context c) { return c.getSharedPreferences("ttr-audio", Context.MODE_PRIVATE); }
     public static int volume(Context c, String key) { return Math.max(0, Math.min(100, audio(c).getInt(key, 50))); }
+    /**
+     * Corporate Clash (preferences.json): its window size must match the phone's game area, or Clash and the
+     * Windows helper keep resizing the window and the picture goes black. Anti-aliasing is turned off; v-sync is turned off and the FPS counter on
+     * once (the phone's graphics can't do anti-aliasing; players can turn v-sync back on).
+     */
+    public static void prepareClash(Context c, File game) throws Exception {
+        android.content.SharedPreferences defaults = c.getSharedPreferences("ttr-mobile-defaults", Context.MODE_PRIVATE);
+        File path = new File(game, "preferences.json");
+        if (path.length() > 262144) throw new IOException("The game settings file is too large.");
+        JSONObject settings = path.isFile() ? new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8)) : new JSONObject();
+        settings.put("fullscreen", false); settings.put("display-mode", 0); settings.put("aspect-ratio", 0);
+        settings.put("res", new JSONArray().put(TtrViewport.renderWidth).put(TtrViewport.renderHeight));
+        settings.put("musicVol", volume(c, "music-volume") / 100.0); settings.put("sfxVol", volume(c, "sfx-volume") / 100.0); // the launcher's volumes
+        settings.put("anti-aliasing", false); // multisampling leaves the screen black on the phone's graphics
+        if (!defaults.getBoolean("clash-vsync-v1", false)) settings.put("vertical-sync", false);
+        if (!defaults.getBoolean("clash-show-fps-v1", false)) settings.put("show-fps", true); // once, as for TTR; players can turn it off
+        AtomicFile file = new AtomicFile(path); FileOutputStream stream = null;
+        try { stream = file.startWrite(); stream.write((settings.toString(4) + "\n").getBytes(StandardCharsets.UTF_8)); file.finishWrite(stream); }
+        catch (Exception e) { if (stream != null) file.failWrite(stream); throw e; }
+        defaults.edit().putBoolean("clash-vsync-v1", true).putBoolean("clash-show-fps-v1", true).apply();
+    }
     static void prepare(Context c, File game, android.content.SharedPreferences defaults) throws Exception {
         File path = new File(game, "settings.json");
         if (path.length() > 131072) throw new IOException("The game settings file is too large.");

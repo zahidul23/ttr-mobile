@@ -102,6 +102,7 @@ public final class TtrRuntime {
                 File dir = directory(c);
                 Files.write(status(c).toPath(), "{\"phase\":\"runtime\",\"code\":0}".getBytes(StandardCharsets.UTF_8));
                 if (!TtrWineRuntime.installed(c)) { lastMessage = "Installing Windows…"; installing = true; try { TtrWineRuntime.install(c); } finally { installing = false; } }
+                TtrWineRuntime.useOwnEmulator(c);
                 if (session != generation) return; // closed meanwhile
                 TtrGraphics.prepare(c);
                 TtrStartupProgress.setup = 100; TtrStartupProgress.setupMessage = null;
@@ -234,16 +235,21 @@ public final class TtrRuntime {
         env.put("LIBGL_MIPMAP", "3");
         // Game surfaces cover the whole X screen, so rotating (a wider window) needs no new surface.
         if (TtrViewport.rootWidth > 0) { env.put("TTR_GL_MIN_WIDTH", String.valueOf(TtrViewport.rootWidth)); env.put("TTR_GL_MIN_HEIGHT", String.valueOf(TtrViewport.renderHeight)); }
-        // FEX keeps x86 memory ordering with a barrier after every unaligned access. TTR's protector unpacks the game
+        // FEX keeps x86 memory ordering with a barrier after every unaligned access. Rewritten's protector unpacks the game
         // through unaligned data, so those barriers doubled its start (window after 33 s instead of 19 s on a Moto G
         // Stylus). Off: unaligned accesses are plain; aligned ones keep full ordering.
         env.put("FEX_HALFBARRIERTSOENABLED", "0");
+        // Translated code is kept between launches (only Corporate Clash turns it on, see bootstrap.c). In the cache
+        // folder, so Android can reclaim it; FEX rebuilds it as the game runs.
+        File fexCache = new File(c.getCacheDir(), "fex-cache"); fexCache.mkdirs();
+        env.put("FEX_DISKCACHEPATH", "Z:" + fexCache.getCanonicalPath().replace('/', '\\') + "\\");
+        env.put("FEX_DISKCACHEMAXFILESIZE", String.valueOf(768L << 20));
         if (new File(dir, "present-off").isFile()) env.put("TTR_PRESENT", "0"); // developer switch: GL4ES's original frame copy
-        try { // Developer switch: no_backup/ttr/gl-env holds KEY=VALUE lines for graphics experiments (LIBGL_*, TTR_*).
+        try { // Developer switch: no_backup/ttr/gl-env holds KEY=VALUE lines for experiments (LIBGL_*, TTR_*, PROTON_*, WINE_*).
             File extra = new File(dir, "gl-env");
             if (extra.isFile()) for (String line : new String(Files.readAllBytes(extra.toPath()), StandardCharsets.US_ASCII).split("\n")) {
                 int eq = line.indexOf('='); String key = eq > 0 ? line.substring(0, eq).trim() : "";
-                if (key.matches("(LIBGL|TTR|MESA|ZINK|VK|GALLIUM|GAMENATIVE|GAMESCOPE|ADRENOTOOLS|FEX|ENABLE|DISABLE|TU|WRAPPER)_[A-Z0-9_]+")) env.put(key, line.substring(eq + 1).trim());
+                if (key.matches("(LIBGL|TTR|MESA|ZINK|VK|GALLIUM|GAMENATIVE|GAMESCOPE|ADRENOTOOLS|FEX|ENABLE|DISABLE|TU|WRAPPER|PROTON|WINE)_[A-Z0-9_]+")) env.put(key, line.substring(eq + 1).trim());
             }
         } catch (IOException ignored) { }
         return env;
@@ -263,6 +269,12 @@ public final class TtrRuntime {
         if (stale != null) for (File f : stale) if (f.delete()) log(c, "Cleared " + f.getName() + " left by an earlier Windows session.");
     }
     static File prefix(Context c) { return new File(c.getFilesDir(), "wine-prefix"); }
+    /** Drive G: is the folder holding Corporate Clash, so the game runs from G:\game (see TtrSession). */
+    static void clashDrive(Context c) throws IOException {
+        Path link = new File(prefix(c), "dosdevices/g:").toPath(), target = TtrGame.location(c, TtrGame.CLASH).getParentFile().toPath();
+        if (Files.isSymbolicLink(link) && Files.readSymbolicLink(link).equals(target)) return;
+        Files.deleteIfExists(link); Files.createSymbolicLink(link, target);
+    }
 
     static boolean detailedLogging(Context c) { return c.getSharedPreferences("ttr-debug", 0).getBoolean("detailed", false); }
     static void setDetailedLogging(Context c, boolean on) { c.getSharedPreferences("ttr-debug", 0).edit().putBoolean("detailed", on).commit(); }
@@ -357,6 +369,7 @@ public final class TtrRuntime {
             TtrStartupProgress.setup = 100; TtrStartupProgress.setupMessage = null;
         }
         new File(TtrWineRuntime.directory(c), "prefixPack.txz").delete(); // only needed for first-run setup
+        clashDrive(c);
         for (String old : new String[]{"lib/wine/i386-windows", "lib/wine/i386-windows.off"}) // 32-bit Windows was dropped
             TtrWineRuntime.deleteTree(new File(TtrWineRuntime.directory(c), old));
         File noWow = new File(prefix(c), "ttr-no-wow64.v1");

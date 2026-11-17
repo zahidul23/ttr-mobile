@@ -96,7 +96,8 @@ public final class TtrDiagnostics {
             s.append("\nPrevious Windows helper log:\n").append(tail(new File(windows, "bootstrap-previous.log"), 6000));
         } catch (IOException ignored) { }
         s.append("\nRunning Windows programs:\n").append(programs());
-        File[] logs = new File(c.getFilesDir(), "ttr/game/logs").listFiles((d, n) -> n.endsWith(".log"));
+        String game = TtrGame.active(c); s.append("\nGame: ").append(TtrGame.fullName(game)).append('\n');
+        File[] logs = new File(TtrGame.location(c, game), "logs").listFiles((d, n) -> n.endsWith(".log"));
         if (logs != null && logs.length > 0) {
             File newest = logs[0]; for (File f : logs) if (f.lastModified() > newest.lastModified()) newest = f;
             s.append("\nGame log (").append(newest.getName()).append("):\n").append(tail(newest, 8000));

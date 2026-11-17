@@ -199,7 +199,7 @@ public final class TtrStartupProgress {
             label = waiting ? "Signed in · waiting for " + runtimeStageName(runtime) : "Unpacking the game";
             detail = waiting ? runtime.label : "";
         }
-        else if (signingIn) { stage = "signin"; step = 1; label = "Signing in"; detail = "Contacting Toontown Rewritten"; }
+        else if (signingIn) { stage = "signin"; step = 1; label = "Signing in"; detail = "Contacting " + TtrGame.name(TtrGame.active(c)); }
         else { clientFlow.reset(); return new Stage("Ready to play", 0); }
         // Once TTR's own log appears, follow its milestones up to the game window.
         int stagePercent = -1;

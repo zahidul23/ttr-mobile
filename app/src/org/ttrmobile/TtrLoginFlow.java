@@ -11,6 +11,8 @@ public final class TtrLoginFlow {
         String code(String banner) throws Exception;
         void queue(String position) throws Exception;
         void waitForQueue() throws Exception;
+        /** Corporate Clash ToonStep: returns once the player has approved the sign-in by email (throws if cancelled). */
+        default void approve(String banner) throws Exception { throw new InterruptedException(); }
     }
     public static final class Session {
         public final String server, cookie, manifest;

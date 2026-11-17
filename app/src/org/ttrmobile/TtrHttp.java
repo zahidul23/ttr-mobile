@@ -20,8 +20,9 @@ public final class TtrHttp {
         String host = target.getHost().toLowerCase(java.util.Locale.ROOT);
         if (!target.getProtocol().equals("https") || target.getUserInfo() != null
                 || (target.getPort() != -1 && target.getPort() != 443)
-                || !(host.equals("toontownrewritten.com") || host.endsWith(".toontownrewritten.com")))
-            throw new IOException("An update URL is outside the official TTR service.");
+                || !(host.equals("toontownrewritten.com") || host.endsWith(".toontownrewritten.com")
+                     || host.equals("corporateclash.net") || host.endsWith(".corporateclash.net")))
+            throw new IOException("An update URL is outside the official game services.");
         return target;
     }
     public static HttpsURLConnection open(String url) throws IOException {
@@ -60,6 +61,31 @@ public final class TtrHttp {
             int code = c.getResponseCode();
             if (code != 200) throw new IOException("The TTR login service is unavailable (HTTP " + code + "). Try again later.");
             try (InputStream in = c.getInputStream()) { return new JSONObject(read(in, 65536)); }
+        } finally { java.util.Arrays.fill(bytes, (byte)0); c.disconnect(); }
+    }
+    /**
+     * Corporate Clash launcher API (form POST, JSON reply). The JSON body is used whatever the HTTP status, since
+     * refusals come back as JSON too.
+     */
+    public static JSONObject clash(String url, Map<String, String> fields, String bearer) throws Exception {
+        StringBuilder body = new StringBuilder();
+        for (Map.Entry<String, String> field : fields.entrySet()) {
+            if (body.length() > 0) body.append('&');
+            body.append(URLEncoder.encode(field.getKey(), "UTF-8")).append('=').append(URLEncoder.encode(field.getValue(), "UTF-8"));
+        }
+        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+        HttpsURLConnection c = open(url); c.setUseCaches(false);
+        try {
+            c.setRequestMethod("POST"); c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            if (bearer != null) { c.setRequestProperty("Authorization", "Bearer " + bearer); c.setRequestProperty("x-realm", "production"); }
+            c.setFixedLengthStreamingMode(bytes.length);
+            try (OutputStream out = c.getOutputStream()) { out.write(bytes); }
+            int code = c.getResponseCode();
+            InputStream stream = code >= 400 ? c.getErrorStream() : c.getInputStream();
+            if (stream == null) throw new IOException("The Corporate Clash login service is unavailable (HTTP " + code + "). Try again later.");
+            try (InputStream in = stream) { return new JSONObject(read(in, 65536)); }
+            catch (org.json.JSONException e) { throw new IOException("The Corporate Clash login service is unavailable (HTTP " + code + "). Try again later."); }
         } finally { java.util.Arrays.fill(bytes, (byte)0); c.disconnect(); }
     }
     private static String read(InputStream in, int limit) throws Exception {
