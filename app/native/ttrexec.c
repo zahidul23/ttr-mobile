@@ -69,11 +69,44 @@ static char **through_linker(const char *path, char *const argv[]) {
     return out;
 }
 
+/*
+ * "Open Folder" in the game's Content Packs menu makes Wine start "explorer.exe <resources folder>". A Windows file
+ * window is no use on the phone, so that launch is answered here: the folder is written to the file named by
+ * TTR_FOLDER_REQUEST (the app watches it and shows its own content pack manager) and a program that starts and
+ * ends at once runs in its place, so the game sees an ordinary, successful launch.
+ */
+static int ends_with(const char *text, const char *tail) {
+    size_t a = strlen(text), b = strlen(tail); if (a < b) return 0;
+    for (size_t i = 0; i < b; i++) { char c = text[a - b + i], d = tail[i]; if (c >= 'A' && c <= 'Z') c += 32; if (c != d) return 0; }
+    return 1;
+}
+static void folder_request(const char *folder) {
+    const char *file = getenv("TTR_FOLDER_REQUEST"); if (!file || !*file) return;
+    char temp[4200]; if (snprintf(temp, sizeof temp, "%s.tmp", file) >= (int) sizeof temp) return;
+    int fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600); if (fd < 0) return;
+    ssize_t ignored = write(fd, folder, strlen(folder)); ignored = write(fd, "\n", 1); (void) ignored; close(fd);
+    rename(temp, file);
+}
+/* The launch with its explorer replaced, or NULL when argv is not a folder-opening explorer launch. */
+static char **folder_launch(char *const argv[]) {
+    if (!argv || !getenv("TTR_FOLDER_REQUEST")) return NULL;
+    size_t n = 0; while (argv[n]) n++;
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (!ends_with(argv[i], "explorer.exe") || argv[i + 1][0] == '/' || argv[i + 1][0] == '-') continue;
+        char **out = calloc(i + 4, sizeof(char *)); if (!out) return NULL;
+        for (size_t k = 0; k < i; k++) out[k] = argv[k];
+        out[i] = "C:\\windows\\system32\\cmd.exe"; out[i + 1] = "/c"; out[i + 2] = "exit";
+        folder_request(argv[i + 1]); return out;
+    }
+    return NULL;
+}
+
 typedef int (*execve_fn)(const char *, char *const[], char *const[]);
 typedef int (*spawn_fn)(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *, char *const[], char *const[]);
 
 int execve(const char *path, char *const argv[], char *const envp[]) {
     static execve_fn real; if (!real) real = (execve_fn)dlsym(RTLD_NEXT, "execve");
+    char **replaced = folder_launch(argv); if (replaced) argv = replaced;
     if (app_elf(path)) { char **args = through_linker(path, argv); if (!args) { errno = ENOMEM; return -1; } return real(LINKER, args, envp); }
     return real(path, argv, envp);
 }
@@ -247,3 +280,4 @@ __attribute__((constructor)) static void watch_signals(void) {
         static sigaction_fn real; if (!real) real = (sigaction_fn) dlsym(RTLD_NEXT, "sigaction"); real(sigs[i], &act, NULL);
     }
 }
+

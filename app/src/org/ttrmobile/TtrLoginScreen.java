@@ -32,7 +32,47 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     private final TtrAccounts vault;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private EditText username, password;
-    private LinearLayout card, mainPanel, gamePanel, accountPanel, filesCard, readyCard;
+    private LinearLayout card, mainPanel, gamePanel, accountPanel, filesCard, readyCard, packsPanel, packList;
+    private int packsLoad;
+    private TextView packsIntro;
+    private View gear;
+    private View backdropRoot, backdropArt, backdropShade;
+    private LinearLayout header, outerBox, storageBox;
+    private int storageLoad;
+    /** Storage used by Windows, the TTR game files and content packs (measured off the main thread when Settings opens). */
+    private void refreshStorage() {
+        final int load = ++storageLoad;
+        if (storageBox.getChildCount() == 0) { TextView wait = text("Measuring storage\u2026", 13, MUTED); storageBox.addView(wait); }
+        new Thread(() -> { long[] used = TtrUsage.measure(activity); ui.post(() -> { if (load == storageLoad) showStorage(used); }); }, "ttr-usage").start();
+    }
+    private void showStorage(long[] used) {
+        storageBox.removeAllViews();
+        TextView title = text("Storage used on this phone", 12, GOLD); title.setTypeface(null, Typeface.BOLD); title.setAllCaps(true); title.setLetterSpacing(0.08f); storageBox.addView(title);
+        add(storageBox, storageRow("Windows", used[0], false), 8);
+        add(storageBox, storageRow("TTR game files", used[1], false), 4);
+        add(storageBox, storageRow("Content packs", used[2], false), 4);
+        View line = new View(activity); line.setBackgroundColor(0x26ffffff); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, Math.max(1, dp(1))); lp.topMargin = dp(8); storageBox.addView(line, lp);
+        add(storageBox, storageRow("Total", used[0] + used[1] + used[2], true), 8);
+    }
+    private View storageRow(String label, long bytes, boolean bold) {
+        LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = text(label, 14, bold ? Color.WHITE : SOFT), value = text(TtrPacks.readable(bytes), 14, bold ? Color.WHITE : SOFT); value.setGravity(Gravity.END);
+        if (bold) { name.setTypeface(null, Typeface.BOLD); value.setTypeface(null, Typeface.BOLD); }
+        row.addView(name, new LinearLayout.LayoutParams(0, -2, 1)); row.addView(value);
+        return row;
+    }
+    /** Last system-bar and cutout insets; the launcher screen pads for them, the manager over the game does not (the game area is already below them). */
+    private int[] insetPad = {0, 0, 0, 0};
+    /** The launcher's artwork, tint and game title; over the running game they are off, so the game shows around a card that starts at the page heading. */
+    private void backdrop(boolean on) {
+        backdropRoot.setBackgroundColor(on ? 0xff25485a : 0);
+        header.setVisibility(on ? View.VISIBLE : View.GONE);
+        backdropArt.setVisibility(on ? View.VISIBLE : View.GONE); backdropShade.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (on) outerBox.setPadding(dp(16) + insetPad[0], dp(20) + insetPad[1], dp(16) + insetPad[2], dp(20) + insetPad[3]);
+        else outerBox.setPadding(dp(16), dp(20), dp(16), dp(20));
+        ((LinearLayout.LayoutParams) packsPanel.getLayoutParams()).topMargin = dp(on ? 18 : 0); packsPanel.requestLayout();
+        card.setBackground(background(on ? 0xef102b3a : 0xfc102b3a, 22)); // nearly solid over the game, so the text stays readable
+    }
     private TextView authStage, fileStage, release, readyRelease, accountStatus, passwordHelp, accountTitle, accountHint;
     private ProgressPanel runtimePanel, clientPanel;
     private LinearLayout accountChoices;
@@ -48,7 +88,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     private TextView notice;
     private int shownMessage = TtrLauncher.messageId;
     private String shownError;
-    private static final int MAIN = 0, ACCOUNT = 1, SETTINGS = 2;
+    private static final int MAIN = 0, ACCOUNT = 1, SETTINGS = 2, PACKS = 3;
     private static final int GOLD = 0xffffd65e, INK = 0xff0a2634, MUTED = 0xffb8d0dd, SOFT = 0xffdcebf1, CHIP = 0xff254e66;
 
     /** Heading + step, current status, determinate bar, then detail and time remaining. */
@@ -173,21 +213,21 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     private String appBuild() { try { return activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0).versionName; } catch (Exception e) { return ""; } }
 
     private void buildScreen() {
-        FrameLayout root = new FrameLayout(activity); root.setBackgroundColor(0xff25485a);
-        ImageView art = new ImageView(activity); art.setImageDrawable(artwork("background.png")); art.setScaleType(ImageView.ScaleType.CENTER_CROP); root.addView(art, new FrameLayout.LayoutParams(-1, -1));
-        View shade = new View(activity); shade.setBackgroundColor(0x850b1b25); root.addView(shade, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout root = new FrameLayout(activity); root.setBackgroundColor(0xff25485a); backdropRoot = root;
+        ImageView art = new ImageView(activity); backdropArt = art; art.setImageDrawable(artwork("background.png")); art.setScaleType(ImageView.ScaleType.CENTER_CROP); root.addView(art, new FrameLayout.LayoutParams(-1, -1));
+        View shade = new View(activity); backdropShade = shade; shade.setBackgroundColor(0x850b1b25); root.addView(shade, new FrameLayout.LayoutParams(-1, -1));
         ScrollView scroll = new ScrollView(activity); scroll.setFillViewport(true);
-        LinearLayout outer = new LinearLayout(activity); outer.setGravity(Gravity.CENTER); outer.setPadding(dp(16), dp(20), dp(16), dp(20));
+        LinearLayout outer = new LinearLayout(activity); outerBox = outer; outer.setGravity(Gravity.CENTER); outer.setPadding(dp(16), dp(20), dp(16), dp(20));
         card = column(); card.setPadding(dp(22), dp(20), dp(22), dp(16)); card.setBackground(background(0xef102b3a, 22));
 
         // Header: game icon and name, settings on the right.
-        LinearLayout header = new LinearLayout(activity); header.setGravity(Gravity.CENTER_VERTICAL);
+        header = new LinearLayout(activity); header.setGravity(Gravity.CENTER_VERTICAL);
         ImageView icon = new ImageView(activity); icon.setImageDrawable(activity.getApplicationInfo().loadIcon(activity.getPackageManager())); icon.setContentDescription("TTR Mobile (unofficial)"); header.addView(icon, new LinearLayout.LayoutParams(dp(56), dp(56)));
         LinearLayout titles = column();
         TextView title = text("Toontown Rewritten", 22, Color.WHITE); title.setTypeface(null, Typeface.BOLD); titles.addView(title);
         titles.addView(text("Android wrapper for Windows TTR", 13, MUTED));
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1); titleParams.leftMargin = dp(12); header.addView(titles, titleParams);
-        View gear = new Gear(); gear.setContentDescription("Settings"); gear.setClickable(true); gear.setFocusable(true); tactile(gear);
+        gear = new Gear(); gear.setContentDescription("Settings"); gear.setClickable(true); gear.setFocusable(true); tactile(gear);
         gear.setBackground(background(0x26ffffff, 22));
         gear.setOnClickListener(v -> showPanel(panel == SETTINGS ? MAIN : SETTINGS)); header.addView(gear, new LinearLayout.LayoutParams(dp(44), dp(44)));
         add(card, header, 0);
@@ -262,8 +302,12 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         section("Controls");
         add(gamePanel, setting("Haptic feedback", "In the game, this works in portrait only.",
             toggle(TtrTouchControls.haptics(activity), on -> TtrTouchControls.setHaptics(activity, on))), 10);
+        section("Content packs");
+        add(gamePanel, setting("Content packs", "Packs change how the game looks or sounds. Add them from the browser here, or copy .mf files into the packs folder.", null), 10);
+        Button managePacks = button("Manage content packs"); managePacks.setOnClickListener(v -> showPanel(PACKS)); add(gamePanel, managePacks, 8);
         section("Game files");
         release = text(TtrUpdater.release(activity), 12, MUTED); add(gamePanel, release, 6);
+        storageBox = column(); storageBox.setPadding(dp(14), dp(12), dp(14), dp(12)); storageBox.setBackground(background(0x26ffffff, 14)); add(gamePanel, storageBox, 10);
         retry = button("Check and repair game files"); retry.setOnClickListener(v -> { TtrGameFiles.ensure(activity, true); showPanel(MAIN); }); add(gamePanel, retry, 8);
         section("Help");
         Button diagnostics = button("Share diagnostics"); diagnostics.setOnClickListener(v -> shareDiagnostics()); add(gamePanel, diagnostics, 8);
@@ -271,6 +315,17 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         TextView about = text("TTR Mobile " + appBuild() + "\nUnofficial launcher; not made by the Toontown Rewritten team.", 12, MUTED); add(gamePanel, about, 12);
         about.setOnLongClickListener(v -> { TtrDiagnostics.show(activity); return true; });
         backFooter(gamePanel, () -> showPanel(MAIN));
+
+        // Content packs page: the installed packs with their icon, name and description; on/off, order, delete.
+        packsPanel = column(); add(card, packsPanel, 18); packsPanel.setVisibility(View.GONE);
+        TextView packsTitle = text("Content packs", 19, Color.WHITE); packsTitle.setTypeface(null, Typeface.BOLD); packsPanel.addView(packsTitle);
+        packsIntro = text("", 12, MUTED); add(packsPanel, packsIntro, 2);
+        Button browse = button("Find and download packs"); browse.setTypeface(null, Typeface.BOLD); browse.setBackgroundTintList(android.content.res.ColorStateList.valueOf(GOLD)); browse.setTextColor(INK);
+        browse.setOnClickListener(v -> TtrPackBrowser.open(activity)); add(packsPanel, browse, 14);
+        packList = column(); add(packsPanel, packList, 12);
+        add(packsPanel, text("Already have a pack? Copy its .mf file into the pack folder with a file manager (look for TTR Mobile in its side menu).", 12, MUTED), 14);
+        Button openFolder = button("Open pack folder"); openFolder.setOnClickListener(v -> openPackFolder()); add(packsPanel, openFolder, 8);
+        backFooter(packsPanel, this::leavePacks);
 
         // Live sign-in progress, shared by all pages (results and errors show as a notice instead).
         authStage = text("", 14, SOFT); authStage.setVisibility(View.GONE); add(card, authStage, 12);
@@ -291,7 +346,8 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
                 android.graphics.Insets ime = insets.getInsets(android.view.WindowInsets.Type.ime());
                 l = bars.left; t = bars.top; r = bars.right; b = Math.max(bars.bottom, ime.bottom);
             } else { l = insets.getSystemWindowInsetLeft(); t = insets.getSystemWindowInsetTop(); r = insets.getSystemWindowInsetRight(); b = insets.getSystemWindowInsetBottom(); }
-            outer.setPadding(dp(16) + l, dp(20) + t, dp(16) + r, dp(20) + b);
+            insetPad = new int[]{l, t, r, b};
+            if (packsDone == null) outer.setPadding(dp(16) + l, dp(20) + t, dp(16) + r, dp(20) + b);
             FrameLayout.LayoutParams n = (FrameLayout.LayoutParams) notice.getLayoutParams(); n.bottomMargin = dp(24) + b; notice.setLayoutParams(n);
             return insets;
         });
@@ -426,7 +482,145 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         mainPanel.setVisibility(which == MAIN ? View.VISIBLE : View.GONE);
         accountPanel.setVisibility(which == ACCOUNT ? View.VISIBLE : View.GONE);
         gamePanel.setVisibility(which == SETTINGS ? View.VISIBLE : View.GONE);
+        packsPanel.setVisibility(which == PACKS ? View.VISIBLE : View.GONE);
+        if (which == PACKS) refreshPacks();
+        if (which == SETTINGS) refreshStorage();
         changed();
+    }
+    /** Opens the system Files app at the pack folder (TtrPackProvider). */
+    private void openPackFolder() {
+        try {
+            android.net.Uri folder = android.provider.DocumentsContract.buildRootUri(TtrPackProvider.authority(activity), TtrPackProvider.ROOT_ID);
+            activity.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(folder, android.provider.DocumentsContract.Root.MIME_TYPE_ITEM));
+        } catch (Exception e) { showNotice("No file manager found to open the pack folder."); }
+    }
+    private boolean packsLocked() {
+        if (!TtrRuntime.isSessionRunning(activity)) return false;
+        showNotice("The game is open: turn packs on or off and reorder them in its own Content Packs list."); return true;
+    }
+    /** Lists the installed packs (read off the main thread: each pack's name and icon come from inside its file). */
+    private void refreshPacks() {
+        final int load = ++packsLoad;
+        new Thread(() -> {
+            List<TtrPacks.Pack> packs = TtrPacks.list(activity);
+            ui.post(() -> { if (load == packsLoad && panel == PACKS) showPacks(packs); });
+        }, "ttr-packs").start();
+    }
+    /** Set while the manager is open over the running game: leaving it goes back to the game. */
+    private Runnable packsDone;
+    /** Over the running game the manager is the only page: no settings button, and Back returns to the game. */
+    public void openPacksOverGame(Runnable done) { packsDone = done; gear.setVisibility(View.GONE); backdrop(false); showPanel(PACKS); }
+    public void leavePacks() {
+        Runnable done = packsDone; packsDone = null; gear.setVisibility(View.VISIBLE); backdrop(true);
+        if (done != null) { showPanel(MAIN); done.run(); } else showPanel(SETTINGS);
+    }
+    private void showPacks(List<TtrPacks.Pack> packs) {
+        packsIntro.setText(TtrRuntime.isSessionRunning(activity)
+            ? "The game is open. Download packs here, then tap Refresh All in the game's Content Packs. Turn packs on or off and set their order in the game."
+            : "Drag \u2261 to reorder: packs higher in the list win when two change the same thing. Changes apply the next time the game starts.");
+        packList.removeAllViews();
+        if (packs.isEmpty()) { TextView none = text("No content packs yet.", 14, SOFT); none.setPadding(dp(4), dp(4), dp(4), dp(4)); packList.addView(none); return; }
+        for (int i = 0; i < packs.size(); i++) {
+            TtrPacks.Pack pack = packs.get(i); int index = i;
+            LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(12), dp(12), dp(12), dp(12)); row.setBackground(background(0x26ffffff, 14));
+            if (packs.size() > 1) row.addView(dragHandle(row, pack, index), new LinearLayout.LayoutParams(dp(30), dp(48)));
+            row.addView(packIcon(pack), new LinearLayout.LayoutParams(dp(48), dp(48)));
+            LinearLayout words = column(); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(0, -2, 1); wp.leftMargin = dp(12); wp.rightMargin = dp(8); row.addView(words, wp);
+            TextView name = text(pack.name, 15, Color.WHITE); name.setTypeface(null, Typeface.BOLD); words.addView(name);
+            if (!pack.description.isEmpty()) { TextView description = text(pack.description, 12, MUTED); description.setLineSpacing(0, 1.15f); words.addView(description); }
+            add(words, text(TtrPacks.readable(pack.size), 12, 0xff8fb0c0), 3);
+            View trash = new Trash(); trash.setContentDescription("Delete " + pack.name); trash.setClickable(true); tactile(trash); trash.setOnClickListener(v -> deletePack(pack));
+            row.addView(trash, new LinearLayout.LayoutParams(dp(40), dp(40)));
+            row.addView(toggle(pack.enabled, on -> { if (packsLocked()) { refreshPacks(); return; } try { TtrPacks.setEnabled(activity, pack, on); } catch (Exception e) { showNotice("Unable to change this pack."); refreshPacks(); } }));
+            add(packList, row, index == 0 ? 0 : 8);
+        }
+    }
+    /**
+     * The grip at the left of a pack: hold it and drag the pack up or down; the others make room, and letting go drops
+     * it there. Near the top or bottom of the screen the page scrolls along.
+     */
+    private View dragHandle(LinearLayout row, TtrPacks.Pack pack, int from) {
+        TextView grip = text("\u2261", 26, MUTED); grip.setGravity(Gravity.CENTER); grip.setContentDescription("Drag to reorder " + pack.name);
+        final float[] startY = new float[1]; final int[] startScroll = new int[1], target = new int[1]; final float[] lastRaw = new float[1];
+        final ScrollView[] scroller = new ScrollView[1];
+        final Runnable[] follow = new Runnable[1];
+        Runnable place = () -> {
+            float dy = lastRaw[0] - startY[0] + (scroller[0] == null ? 0 : scroller[0].getScrollY() - startScroll[0]);
+            row.setTranslationY(dy);
+            float center = row.getTop() + row.getHeight() / 2f + dy; int to = 0;
+            for (int j = 0; j < packList.getChildCount(); j++) { View other = packList.getChildAt(j); if (j != from && other.getTop() + other.getHeight() / 2f < center) to++; }
+            target[0] = to; float shift = row.getHeight() + dp(8);
+            for (int j = 0; j < packList.getChildCount(); j++) {
+                if (j == from) continue; View other = packList.getChildAt(j);
+                other.animate().translationY(j > from && j <= to ? -shift : j < from && j >= to ? shift : 0).setDuration(120).start();
+            }
+        };
+        follow[0] = () -> {
+            if (scroller[0] == null) return;
+            int[] at = new int[2]; scroller[0].getLocationOnScreen(at); float top = at[1], bottom = at[1] + scroller[0].getHeight(), edge = dp(90);
+            int step = lastRaw[0] < top + edge ? -dp(12) : lastRaw[0] > bottom - edge ? dp(12) : 0;
+            if (step != 0) { scroller[0].scrollBy(0, step); place.run(); }
+            ui.postDelayed(follow[0], 16);
+        };
+        grip.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    if (packsLocked()) return true;
+                    for (android.view.ViewParent p = packList.getParent(); p != null; p = p.getParent()) if (p instanceof ScrollView) { scroller[0] = (ScrollView) p; break; }
+                    v.getParent().requestDisallowInterceptTouchEvent(true); if (scroller[0] != null) scroller[0].requestDisallowInterceptTouchEvent(true);
+                    startY[0] = lastRaw[0] = e.getRawY(); startScroll[0] = scroller[0] == null ? 0 : scroller[0].getScrollY(); target[0] = from;
+                    row.setElevation(dp(8)); row.setAlpha(.92f); row.setScaleX(1.02f); row.setScaleY(1.02f);
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); ui.post(follow[0]); return true;
+                case android.view.MotionEvent.ACTION_MOVE:
+                    lastRaw[0] = e.getRawY(); place.run(); return true;
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    ui.removeCallbacks(follow[0]); row.setElevation(0); row.setAlpha(1f); row.setScaleX(1f); row.setScaleY(1f);
+                    for (int j = 0; j < packList.getChildCount(); j++) { packList.getChildAt(j).animate().cancel(); packList.getChildAt(j).setTranslationY(0); }
+                    if (e.getActionMasked() == android.view.MotionEvent.ACTION_UP && target[0] != from) {
+                        try { TtrPacks.reorder(activity, pack, target[0]); } catch (Exception ex) { showNotice("Unable to change the order."); }
+                    }
+                    refreshPacks(); return true;
+            }
+            return false;
+        });
+        return grip;
+    }
+    private View packIcon(TtrPacks.Pack pack) {
+        android.graphics.Bitmap bitmap = null;
+        if (pack.icon != null) {
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options(); o.inJustDecodeBounds = true; android.graphics.BitmapFactory.decodeByteArray(pack.icon, 0, pack.icon.length, o);
+            if (o.outWidth > 0 && o.outWidth <= 1024 && o.outHeight <= 1024) bitmap = android.graphics.BitmapFactory.decodeByteArray(pack.icon, 0, pack.icon.length);
+        }
+        if (bitmap != null) {
+            ImageView image = new ImageView(activity); image.setImageBitmap(bitmap); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackground(background(0x33000000, 10)); image.setPadding(dp(2), dp(2), dp(2), dp(2));
+            image.setContentDescription(pack.name + " icon"); return image;
+        }
+        TextView letter = text(pack.name.isEmpty() ? "?" : pack.name.substring(0, 1).toUpperCase(), 20, SOFT); letter.setGravity(Gravity.CENTER); letter.setTypeface(null, Typeface.BOLD); letter.setBackground(background(CHIP, 10)); return letter;
+    }
+    /** Delete icon: a bin drawn to scale, like the gear and pencil. */
+    private final class Trash extends View {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Path path = new android.graphics.Path();
+        Trash() { super(activity); }
+        @Override protected void onDraw(android.graphics.Canvas c) {
+            float s = Math.min(getWidth(), getHeight()), x = (getWidth() - s) / 2f, y = (getHeight() - s) / 2f;
+            paint.setColor(0xffff8a8a); paint.setStyle(android.graphics.Paint.Style.STROKE); paint.setStrokeWidth(Math.max(2f, s * .06f));
+            paint.setStrokeCap(android.graphics.Paint.Cap.ROUND); paint.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            path.reset();
+            path.moveTo(x + s * .24f, y + s * .32f); path.lineTo(x + s * .76f, y + s * .32f);                                   // lid
+            path.moveTo(x + s * .42f, y + s * .32f); path.lineTo(x + s * .42f, y + s * .24f); path.lineTo(x + s * .58f, y + s * .24f); path.lineTo(x + s * .58f, y + s * .32f); // handle
+            path.moveTo(x + s * .30f, y + s * .32f); path.lineTo(x + s * .34f, y + s * .78f); path.lineTo(x + s * .66f, y + s * .78f); path.lineTo(x + s * .70f, y + s * .32f); // bin
+            path.moveTo(x + s * .43f, y + s * .46f); path.lineTo(x + s * .43f, y + s * .66f);
+            path.moveTo(x + s * .57f, y + s * .46f); path.lineTo(x + s * .57f, y + s * .66f);
+            c.drawPath(path, paint);
+        }
+    }
+    private void deletePack(TtrPacks.Pack pack) {
+        if (packsLocked()) return;
+        new TtrDialog(activity, "Delete " + pack.name + "?", "This removes the pack (" + TtrPacks.readable(pack.size) + ") from this phone. You can download it again later.")
+            .button("Delete", TtrDialog.DANGER, () -> { try { TtrPacks.delete(activity, pack); TtrPackProvider.changed(activity); } catch (Exception e) { showNotice("Unable to delete this pack."); } refreshPacks(); })
+            .button("Cancel", TtrDialog.QUIET, null).show();
     }
     /** Windows and Linux builds share the report; older builds only have the on-screen log. */
     private void shareDiagnostics() {
@@ -596,7 +790,7 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
     public void resume() {
         resumed = true; TtrLauncher.attach(this);
         if (!activity.getIntent().getBooleanExtra("ttr_test", false)) TtrGameFiles.ensure(activity, false);
-        changed(); ui.post(watch);
+        changed(); ui.post(watch); if (panel == PACKS) refreshPacks();
         if (waitingStorage) {
             waitingStorage = false;
             if (!TtrStorage.granted(activity)) showNotice("File access is needed to run the game.");
@@ -616,10 +810,10 @@ public final class TtrLoginScreen implements TtrLauncher.Listener {
         if (codeDialog != null) { codeDialog.dismiss(); codeDialog = null; shownChallenge = -1; }
     }
     /** Back from the account or settings page returns to the main page; false when already there. */
-    public boolean back() { if (panel == MAIN || view.getVisibility() != View.VISIBLE) return false; if (panel == ACCOUNT) leaveAccountPage(); else showPanel(MAIN); return true; }
+    public boolean back() { if (packsDone != null) { leavePacks(); return true; } if (panel == MAIN || view.getVisibility() != View.VISIBLE) return false; if (panel == ACCOUNT) leaveAccountPage(); else if (panel == PACKS) leavePacks(); else showPanel(MAIN); return true; }
     public void resize() {
         ViewGroup.LayoutParams p = card.getLayoutParams(); p.width = cardWidth(); card.setLayoutParams(p); notice.setMaxWidth(cardWidth());
     }
     public void destroy() { pause(); ui.removeCallbacks(noticeTimeout); username.setText(""); password.setText(""); }
-    public void clientClosed() { runtimeStarting = false; draftPassword = ""; password.setText(""); }
+    public void clientClosed() { packsDone = null; gear.setVisibility(View.VISIBLE); backdrop(true); runtimeStarting = false; draftPassword = ""; password.setText(""); }
 }

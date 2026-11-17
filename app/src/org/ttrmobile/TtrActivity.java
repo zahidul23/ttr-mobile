@@ -59,7 +59,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     private final Runnable poll=new Runnable(){public void run(){if(!resumed&&!isInPictureInPictureMode())return;
         String phase=TtrRuntime.phase(TtrActivity.this);if(!phase.equals(loggedPhase)){graphicsCheck(loggedPhase,phase);loggedPhase=phase;TtrDiagnostics.log(TtrActivity.this,"Windows phase: "+phase+(TtrRuntime.lastError!=null?" (error: "+TtrRuntime.lastError+")":""));}
 
-        boolean next=TtrRuntime.clientVisible(TtrActivity.this);if(next!=visible){visible=next;if(next)showClient();else{closeKeyboard();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);TtrSafeArea.setFullscreen(TtrActivity.this,safe,controls,false);login.clientClosed();login.view.setVisibility(View.VISIBLE);controls.setVisibility(View.GONE);pointer.setVisibility(View.GONE);gamepad.release();release();updatePip();}}
+        boolean next=TtrRuntime.clientVisible(TtrActivity.this);if(next!=visible){visible=next;if(next)showClient();else{closeKeyboard();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);TtrSafeArea.setFullscreen(TtrActivity.this,safe,controls,false);packsOverGame=false;login.clientClosed();login.view.setVisibility(View.VISIBLE);controls.setVisibility(View.GONE);pointer.setVisibility(View.GONE);gamepad.release();release();updatePip();}}
         ui.postDelayed(this,250);
     }};
     private long gameShownAt;
@@ -98,6 +98,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         safe.requestApplyInsets();
         if(getIntent().getBooleanExtra("ttr_probe",false))TtrRuntime.begin(this,()->{});
         TtrDevServer.start(this);
+        TtrFolderRequest.start(this,folder->{if(folder.toLowerCase(Locale.ROOT).replace('/','\\').endsWith("\\resources"))ui.post(this::openPacksFromGame);});
     }
     public void attachDisplay(int fd){display.attachFd(fd);layoutDisplay();}
     public void refreshDisplay(){release();closeKeyboard();layoutDisplay();}
@@ -188,6 +189,20 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
         android.content.IntentFilter f=new android.content.IntentFilter(android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(homeKey,f,RECEIVER_EXPORTED);else registerReceiver(homeKey,f);
     }
+    /**
+     * "Open Folder" in the game's Content Packs menu: the content pack manager opens over the game (the game keeps
+     * running behind it) and Back returns to the game.
+     */
+    private boolean packsOverGame;
+    private void openPacksFromGame(){
+        if(!visible||isInPictureInPictureMode())return;
+        packsOverGame=true;release();gamepad.release();closeKeyboard();controls.setVisibility(View.GONE);pointer.setVisibility(View.GONE);
+        login.openPacksOverGame(this::closePacksOverGame);login.view.setVisibility(View.VISIBLE);
+    }
+    private void closePacksOverGame(){
+        if(!packsOverGame)return;packsOverGame=false;login.view.setVisibility(View.GONE);
+        if(visible){controls.setVisibility(isInPictureInPictureMode()?View.GONE:View.VISIBLE);showPointer();layoutDisplay();}
+    }
     private final Runnable launchGroups=()->{
         if(!groupsOpen)return;
         String browser=TtrGroups.browser(this);
@@ -265,7 +280,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     @Override public boolean onKeyDown(int code,KeyEvent e){if(visible&&code!=KeyEvent.KEYCODE_BACK&&!isVolumeKey(code)){display.key(code,true);return true;}return super.onKeyDown(code,e);}
     @Override public boolean onKeyUp(int code,KeyEvent e){if(visible&&code!=KeyEvent.KEYCODE_BACK&&!isVolumeKey(code)){display.key(code,false);return true;}return super.onKeyUp(code,e);}
     /** Back: in the game, back to the launcher (only the game closes) or close the app; on the launcher, close the app. */
-    @Override public void onBackPressed(){if(ime.isOpen()){closeKeyboard();return;}if(!visible&&login.back())return;
+    @Override public void onBackPressed(){if(ime.isOpen()){closeKeyboard();return;}if(packsOverGame){login.leavePacks();return;}if(!visible&&login.back())return;
         if(visible){new TtrDialog(this,"Leave the game?","Your toon will log out.")
             .button("Back to launcher",TtrDialog.PRIMARY,this::closeGame)
             .button("Close TTR Mobile",TtrDialog.SECONDARY,this::finishAndRemoveTask)
@@ -280,7 +295,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
     @Override public void onResume(){super.onResume();resumed=true;if(visible)TtrSafeArea.setFullscreen(this,safe,controls,true);login.resume();ui.removeCallbacks(poll);ui.post(poll);TtrAppUpdate.start(this);}
     @Override public void onPause(){resumed=false;if(!isInPictureInPictureMode())ui.removeCallbacks(poll);gamepad.release();release();login.pause();super.onPause();}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);layoutDisplay();login.resize();}
-    @Override public void onDestroy(){TtrDevServer.stop(this);watchHome(false);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
+    @Override public void onDestroy(){TtrFolderRequest.stop();TtrDevServer.stop(this);watchHome(false);resumed=false;ui.removeCallbacksAndMessages(null);release();login.destroy();
         // Only a real close stops Windows; if Android recreates the screen (a system setting changed), the game keeps running.
         // A close also ends the app's process once nothing needs it (a download may finish first).
         alive--;
