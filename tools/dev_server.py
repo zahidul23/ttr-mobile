@@ -34,6 +34,12 @@ def release_apk():
     return max(apks, key=lambda p: tuple(int(x) for x in p.stem.split('-')[-1].split('.'))) if apks else None
 
 
+def clean_apk():
+    """Newest build from build_app.py --clean-test: installed by hand, never offered as an update."""
+    apks = sorted((ROOT / 'dist').glob('TTR-Mobile-*-cleantest.apk'), key=lambda p: p.stat().st_mtime)
+    return apks[-1] if apks else None
+
+
 def apk_hash(path):
     st = path.stat(); key = (str(path), st.st_mtime_ns, st.st_size)
     if key not in _hash_cache: _hash_cache.clear(); _hash_cache[key] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -49,6 +55,7 @@ def switches():
 
 class Handler(BaseHTTPRequestHandler):
     seen = {}  # device -> last contact time
+    clean = False  # --clean: serve only the clean test build, and offer no updates to installed test builds
 
     def reply(self, code, body, kind='application/json'):
         if isinstance(body, str): body = body.encode('utf-8')
@@ -69,11 +76,11 @@ class Handler(BaseHTTPRequestHandler):
             if d:
                 if d not in self.seen: print(time.strftime('%H:%M:%S'), 'phone connected:', d)
                 self.seen[d] = time.time()
-            apk = newest_apk(); config, rev = switches()
+            apk = None if self.clean else newest_apk(); config, rev = switches()
             return self.reply(200, json.dumps({'apk_sha256': apk_hash(apk) if apk else '', 'apk_name': apk.name + ', built ' + time.strftime('%H:%M:%S', time.localtime(apk.stat().st_mtime)) if apk else '',
                                                'config': config, 'config_rev': rev}))
-        if url.path in ('/apk', '/release'):
-            apk = newest_apk() if url.path == '/apk' else release_apk()
+        if url.path in ('/apk', '/release', '/clean'):
+            apk = clean_apk() if url.path == '/clean' else release_apk() if url.path == '/release' else None if self.clean else newest_apk()
             if not apk: return self.reply(404, 'That build has not been made yet.', 'text/plain')
             print(time.strftime('%H:%M:%S'), 'sending', apk.name, 'to', self.client_address[0])
             data = apk.read_bytes(); self.send_response(200)
@@ -114,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
         download = ('<h2>Test build</h2><p>Sends its logs to this PC and offers newer test builds automatically.</p>' +
                     (f'<p><a class="button" href="/apk">Download {html.escape(apk.name)}</a><br><small>built {time.ctime(apk.stat().st_mtime)}</small></p>'
                      if apk else '<p>No test build yet: run <code>python tools/build_app.py --dev-server http://…:8765</code></p>'))
+        if self.clean:
+            clean = clean_apk()
+            download = ('<h2>Clean test build</h2><p>Updates TTR Mobile Dev in place and keeps its data. It does not update itself or send logs to this PC.</p>' +
+                        (f'<p><a class="button" href="/clean">Download {html.escape(clean.name)}</a><br><small>built {time.ctime(clean.stat().st_mtime)}</small></p>'
+                         if clean else '<p>No clean test build yet: run <code>python tools/build_app.py --clean-test</code></p>'))
         download += ('<h2>Release</h2><p>The normal app: no logs sent here and no update prompts.</p>' +
                      (f'<p><a class="button release" href="/release">Download {html.escape(release.name)}</a><br><small>built {time.ctime(release.stat().st_mtime)}</small></p>'
                       if release else '<p>No release built yet: run <code>python tools/build_app.py</code></p>'))
@@ -131,12 +143,14 @@ def lan_addresses():
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--clean', action='store_true', help='serve only the clean test build (build_app.py --clean-test) and offer no updates')
     args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
     LOGS.mkdir(parents=True, exist_ok=True)
+    Handler.clean = args.clean
     server = ThreadingHTTPServer(('0.0.0.0', args.port), Handler)
     for a in lan_addresses(): print(f'TTR test server: http://{a}:{args.port}/')
-    apk = newest_apk(); print('Serving', apk.name if apk else 'no test build yet', '| logs in', LOGS)
+    apk = clean_apk() if args.clean else newest_apk(); print('Serving', apk.name if apk else 'no test build yet', '| logs in', LOGS)
     try: server.serve_forever()
     except KeyboardInterrupt: pass
 

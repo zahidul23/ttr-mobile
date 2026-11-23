@@ -125,6 +125,19 @@ def main():
     wrong='        int tmp = glstate->enable.texture[glstate->texture.active];'
     if text.count(wrong)!=1:raise RuntimeError('GL4ES realize_textures anchor not found')
     p.write_text(text.replace(wrong,'        int tmp = glstate->enable.texture[i];'))
+    # Upstream bug: desktop GL clamps the lit color, alpha included, but GL4ES clamped only rgb. TTR's laff meter text
+    # has a material alpha of 255, so any faint texel drew solid (jagged digits, or black blocks with mipmaps).
+    p=copy/'src/gl/fpe_shader.c';text=p.read_text()
+    front='ShadAppend("Color.rgb = clamp(Color.rgb, 0., 1.);\\n");'
+    back='''ShadAppend("BackColor.rgb = clamp(BackColor.rgb, 0., 1.);\\n");
+            ShadAppend(buff);'''
+    if text.count(front)!=1 or text.count(back)!=1:raise RuntimeError('GL4ES lit color anchor not found')
+    p.write_text(text.replace(front,'ShadAppend("Color = clamp(Color, 0., 1.);\\n");').replace(back,'''ShadAppend(buff);
+            ShadAppend("BackColor = clamp(BackColor, 0., 1.);\\n");'''))
+    # Shaders saved by earlier builds (.gl4es.psa) lack the clamp, so they must not be reused.
+    p=copy/'src/gl/fpe_cache.c';text=p.read_text()
+    if text.count('#define CACHE_VERSION 112')!=1:raise RuntimeError('GL4ES shader cache anchor not found')
+    p.write_text(text.replace('#define CACHE_VERSION 112','#define CACHE_VERSION 113'))
     p=copy/'src/gl/framebuffers.c';text=p.read_text()
     gen='''        gles_glGenerateMipmap(rtarget);
         bound->mipmap_auto = 1;'''

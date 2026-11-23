@@ -229,9 +229,6 @@ public final class TtrRuntime {
         env.put("LIBGL_FB", "3"); env.put("LIBGL_ES", "2"); env.put("LIBGL_NOBANNER", "1"); // GL4ES: desktop GL on Android GLES
         // Full 32-bit textures: GL4ES otherwise uses 16-bit ones on PowerVR, which leaves text edges jagged.
         env.put("LIBGL_AVOID16BITS", "1");
-        // No mipmaps (TTR's own mipmapping setting is off too): with them GL4ES drew the laff meter digits and other
-        // small text as hard black blocks; without them they render cleanly. Also skips uploading extra texture sizes.
-        env.put("LIBGL_MIPMAP", "3");
         // Game surfaces cover the whole X screen, so rotating (a wider window) needs no new surface.
         if (TtrViewport.rootWidth > 0) { env.put("TTR_GL_MIN_WIDTH", String.valueOf(TtrViewport.rootWidth)); env.put("TTR_GL_MIN_HEIGHT", String.valueOf(TtrViewport.renderHeight)); }
         // FEX keeps x86 memory ordering with a barrier after every unaligned access. TTR's protector unpacks the game
