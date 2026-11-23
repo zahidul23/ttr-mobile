@@ -123,7 +123,7 @@ public final class TtrActivity extends com.termux.x11.MainActivity implements Tt
      * surface is scaled so the game window's part of the screen exactly fills the game area, and the
      * rest of the X screen runs off the right edge, out of view.
      */
-    private void layoutDisplay(){int w=root.getWidth(),h=root.getHeight();if(w<1||h<1)return;int gh=TtrViewport.gameHeight(w,h),rh=TtrResolution.get(this),rw=Math.max(rh,(int)Math.round((double)rh*w/gh));
+    private void layoutDisplay(){int w=root.getWidth(),h=root.getHeight();if(w<1||h<1)return;int gh=TtrViewport.gameHeight(w,h),rh=TtrRuntime.isSessionRunning(this)?TtrViewport.renderHeight:TtrResolution.get(this),rw=Math.max(rh,(int)Math.round((double)rh*w/gh));
         rw=(rw+7)/8*8; // Match the X server's CVT horizontal pixel granularity.
         android.util.DisplayMetrics m=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(m);
         int fixed=TtrViewport.rootWidth(rh,Math.max(m.widthPixels,m.heightPixels),Math.min(m.widthPixels,m.heightPixels));
