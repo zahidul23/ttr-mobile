@@ -7,10 +7,42 @@ package org.ttrmobile;
  * side like a Game Boy's B and A on the right; then Map, Gags, Tasks, Camera in a row just above Keyboard at the
  * bottom centre. Landscape (controls over the game): Tap/Cursor switch at the top centre; joystick bottom left;
  * Throw and Jump bottom right; Map, Gags, Tasks, Camera in a row just above Keyboard at the bottom centre. Windows adds a Groups button (ToonHQ groups) beside the switch in both.
- * Landscape also has a small round Controls button right of Keyboard that tucks the game-play controls away (used with a controller).
+ * Landscape also has a small round Controls button right of Keyboard that tucks the game-play controls away (used with a controller),
+ * then Keyboard, the switch and Groups too. It can be dragged along the screen edges wherever no control sits.
  */
 public final class TtrControlLayout {
     private TtrControlLayout() { }
+    /**
+     * Landscape: the stretches of screen edge the Controls button can land on, clear of every visible control, as
+     * {x1, y1, x2, y2} of the button's top left. The invisible movement area doesn't count; the button sits above it.
+     */
+    public static int[][] controlsStrips(int width, int height, float density) {
+        int[] b = bounds("Controls", width, height, density), keys = bounds("Keyboard", width, height, density), pad = bounds("Pad", width, height, density);
+        int[] toss = bounds("Throw", width, height, density), jump = bounds("Jump", width, height, density);
+        int[] toggle = bounds("Pointer", width, height, density), groups = bounds("Groups", width, height, density);
+        int size = b[2], gap = Math.round(8 * density), edge = Math.round(10 * density), far = width - edge - size;
+        java.util.List<int[]> strips = new java.util.ArrayList<>();
+        for (int[] s : new int[][]{
+                {b[0], b[1], toss[0] - gap - size, b[1]}, // Keyboard to Throw
+                {pad[0] + pad[2] + gap, b[1], keys[0] - gap - size, b[1]}, // joystick to Keyboard
+                {edge, edge, toggle[0] - gap - size, edge}, // top left, up to the switch
+                {groups[0] + groups[2] + gap, edge, far, edge}, // top right, from Groups
+                {edge, edge, edge, pad[1] - gap - size}, // left edge, from the top strip's corner down to the joystick
+                {far, edge, far, jump[1] - gap - size}}) // right edge, from the top strip's corner down to Jump
+            if (s[2] >= s[0] && s[3] >= s[1]) strips.add(s);
+        return strips.toArray(new int[0][]);
+    }
+    /** The Controls button's bounds at the point on the strips nearest a centre (x, y). */
+    public static int[] controlsLanding(float x, float y, int width, int height, float density) {
+        int[] b = bounds("Controls", width, height, density); float half = b[2] / 2f, best = Float.MAX_VALUE;
+        for (int[] s : controlsStrips(width, height, density)) {
+            float dx = s[2] - s[0], dy = s[3] - s[1], length = dx * dx + dy * dy;
+            float t = length == 0 ? 0 : Math.max(0, Math.min(1, ((x - half - s[0]) * dx + (y - half - s[1]) * dy) / length));
+            float px = s[0] + t * dx, py = s[1] + t * dy, d = (float) Math.hypot(px + half - x, py + half - y);
+            if (d < best) { best = d; b[0] = Math.round(px); b[1] = Math.round(py); }
+        }
+        return b;
+    }
     /** Height of the game view: portrait is 5:4 across the full width, landscape is full height. */
     public static int gameHeight(int width, int height) {
         return height > width ? Math.min((int) Math.round(width * .8), (int) (height * .6)) : height;
