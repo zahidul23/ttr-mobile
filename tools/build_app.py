@@ -44,8 +44,11 @@ def native(clang, out):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dev-server', metavar='URL', help='test build that sends logs to and updates from tools/dev_server.py at URL, e.g. http://192.168.1.20:8765')
+    parser.add_argument('--clean-test', action='store_true', help='test build for other devices: the Dev app without the test-server client, install permission, plain HTTP or debugging')
     args = parser.parse_args()
-    if not args.dev_server and not RELEASE_KEYSTORE.is_file():
+    if args.dev_server and args.clean_test: parser.error('choose --dev-server or --clean-test')
+    test = args.dev_server or args.clean_test
+    if not test and not RELEASE_KEYSTORE.is_file():
         raise RuntimeError(f'Release key not found at {RELEASE_KEYSTORE}; set TTR_RELEASE_KEYSTORE (see docs/release-signing.md), or use --dev-server for a test build')
     BUILD.mkdir(parents=True, exist_ok=True)
     java = find(TOOLS / 'jdk', 'java.exe'); android = find(TOOLS / 'platform', 'android.jar'); bt = find(TOOLS / 'build-tools', 'aapt2.exe').parent
@@ -86,7 +89,7 @@ def main():
     commit = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip() or 'unknown'
     dirty = subprocess.run(['git', '-C', str(ROOT), 'status', '--porcelain', '--untracked-files=no'], capture_output=True, text=True).stdout.strip()
     # A release is named just by its version, so it must come from committed source; test builds carry the commit.
-    if not args.dev_server and dirty: print('Warning: uncommitted changes; this build is labelled', VERSION + '-dev+' + commit + '-dirty')
+    if not test and dirty: print('Warning: uncommitted changes; this build is labelled', VERSION + '-dev+' + commit + '-dirty')
     manifest = ROOT / 'app/AndroidManifest.xml'
     if args.dev_server:  # plain HTTP to the PC, and permission to install the PC's newer builds
         text = manifest.read_text(encoding='utf-8')
@@ -95,6 +98,12 @@ def main():
         text = text.replace('<uses-permission android:name="android.permission.INTERNET" />',
                             '<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />')
         manifest = BUILD / 'AndroidManifest-dev-server.xml'; manifest.write_text(text, encoding='utf-8')
+    elif args.clean_test:  # the Dev app's identity, so it updates in place, without what makes it look like a self-installer
+        text = manifest.read_text(encoding='utf-8')
+        assert 'android:debuggable="true"' in text
+        text = text.replace('android:debuggable="true"', 'android:debuggable="false"').replace('android:label="TTR Mobile"', 'android:label="TTR Mobile Dev"')
+        text = text.replace('help.toontown.ttrmobile.packs', DEV_PACKAGE + '.packs')
+        manifest = BUILD / 'AndroidManifest-clean-test.xml'; manifest.write_text(text, encoding='utf-8')
     else:  # normal builds are not debuggable (fewer Play Protect flags); test-server builds keep it for run-as
         text = manifest.read_text(encoding='utf-8')
         assert 'android:debuggable="true"' in text
@@ -103,8 +112,8 @@ def main():
     resources = BUILD / 'resources.zip'
     run(bt / 'aapt2.exe', 'compile', '--dir', ROOT / 'build/app-res', '-o', resources)
     run(bt / 'aapt2.exe', 'link', '-I', android, '--manifest', manifest, '-R', resources, '--auto-add-overlay',
-        '--version-name', VERSION if not args.dev_server and not dirty else VERSION + '-dev+' + commit + ('-dirty' if dirty else ''), '--replace-version',
-        *(['--rename-manifest-package', DEV_PACKAGE] if args.dev_server else []), '-o', unsigned)
+        '--version-name', VERSION if not test and not dirty else VERSION + '-dev+' + commit + ('-dirty' if dirty else ''), '--replace-version',
+        *(['--rename-manifest-package', DEV_PACKAGE] if test else []), '-o', unsigned)
     stripper = NDK_BIN / 'llvm-strip.exe'
     libs = {'libXlorie.so': prerequisites['x11'], 'libttrgl4es.so': prerequisites['gl4es'], 'libttrbz2.so': prerequisites['bzip2'],
             'libttrexec.so': out / 'libttrexec.so', 'libandroid-sysvshm.so': out / 'libandroid-sysvshm.so', 'libttrzstd.so': out / 'libttrzstd.so', 'libasound.so': out / 'libasound.so'}
@@ -127,15 +136,16 @@ def main():
         z.write(prerequisites['bootstrap'], 'assets/ttr/TtrBootstrap.exe')
         z.writestr('assets/runtime/components.json', json.dumps(inventory, indent=2))
         if args.dev_server: z.writestr('assets/dev-server.txt', args.dev_server)
+        elif args.clean_test: z.writestr('assets/dev-server.txt', '')  # marks a test build, so the launcher shows no GitHub update line; no client reads it
         for name in libs: z.write(staged / name, 'lib/arm64-v8a/' + name)
         for name, p in licenses.items(): z.write(p, 'assets/licenses/' + name)
         # Launch-screen artwork: the background (app/assets) and the logo and buttons extracted from TTR's installer.
         for p in [*(ROOT / 'app/assets/ttr/art').glob('*.png'), *(ROOT / 'build/ttr-art').glob('*.png')]:
             if p.is_file(): z.write(p, 'assets/ttr/art/' + p.name)
     aligned = BUILD / 'aligned.apk'; run(bt / 'zipalign.exe', '-f', '-p', '4', unsigned, aligned)
-    output = ROOT / 'dist' / f'TTR-Mobile-{VERSION}{"-devserver" if args.dev_server else ""}.apk'
+    output = ROOT / 'dist' / f'TTR-Mobile-{VERSION}{"-devserver" if args.dev_server else "-cleantest" if args.clean_test else ""}.apk'
     output.parent.mkdir(exist_ok=True)
-    if args.dev_server:
+    if test:
         if not (TOOLS / 'ttr-development.jks').exists():  # a throwaway local key for test builds
             run(java.with_name('keytool.exe'), '-genkeypair', '-keystore', TOOLS / 'ttr-development.jks', '-storepass', 'android', '-keypass', 'android',
                 '-alias', 'ttr-mobile-dev', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=TTR Mobile Local Development')
