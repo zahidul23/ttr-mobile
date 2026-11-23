@@ -8,7 +8,7 @@ public final class TtrPlatform {
     public static String gamePath(File game) throws java.io.IOException {
         return "Z:" + game.getCanonicalPath().replace('/', '\\');
     }
-    public static void resolutionChanged() { }
+    public static void resolutionChanged() { TtrRuntime.checkResolution(); }
     /** True when the runtime asks the launcher screen to start it again (failed first setup). */
     public static boolean consumeRuntimeRetry() { return TtrRuntime.consumeSetupRetry(); }
     private TtrPlatform() { }

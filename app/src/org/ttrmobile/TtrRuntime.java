@@ -84,6 +84,16 @@ public final class TtrRuntime {
     static volatile boolean vulkanSession;
     /** Stops Windows so it starts again with the current graphics choice. */
     static void restartForGraphics(Context c) { stop(c); restartRequested = true; }
+    /** The height Windows started at: Wine's desktop and GL4ES's surface keep that size until Windows restarts. */
+    private static volatile int windowsHeight;
+    private static volatile boolean resolutionCheck;
+    /** The resolution setting changed: Windows restarts at the new size as soon as no game is open. */
+    static void checkResolution() { resolutionCheck = true; }
+    private static boolean resolutionStale(Context c) {
+        if (!resolutionCheck || isSessionRunning(c) || phase(c).equals("closing_game")) return false;
+        resolutionCheck = false;
+        return windowsHeight != TtrResolution.get(c);
+    }
     static void prepareStorage(Activity a) {
         Context c = a.getApplicationContext();
         if (!started) try { Files.write(status(c).toPath(), "{\"phase\":\"runtime\",\"code\":0}".getBytes(StandardCharsets.UTF_8)); } catch (Exception ignored) { }
@@ -383,6 +393,7 @@ public final class TtrRuntime {
         }
         if (TtrViewport.rootWidth > 0) { env.put("TTR_GL_MIN_WIDTH", String.valueOf(TtrViewport.rootWidth)); env.put("TTR_GL_MIN_HEIGHT", String.valueOf(TtrViewport.renderHeight)); }
         wineScreen = TtrViewport.renderWidth + "x" + TtrViewport.renderHeight;
+        windowsHeight = TtrViewport.renderHeight;
         int strays = killStrayWindows();
         if (strays > 0) { log(c, "Ended " + strays + " leftover Windows processes."); Thread.sleep(300); }
         clearStaleLocks(c);
@@ -407,6 +418,7 @@ public final class TtrRuntime {
         bootstrapStarted = SystemClock.elapsedRealtime();
         while (started) {
             try {
+                if (resolutionStale(c)) { log(c, "Resolution changed: restarting Windows."); restartForGraphics(c); return; }
                 manageWindow(c);
                 java.lang.Process p = wine;
                 if (p != null && p.waitFor(250, TimeUnit.MILLISECONDS)) {
@@ -425,6 +437,7 @@ public final class TtrRuntime {
                     if (strays > 0) Thread.sleep(300);
                     clearStaleLocks(c);
                     Map<String, String> fresh = environment(c);
+                    windowsHeight = TtrViewport.renderHeight;
                     if (TtrViewport.rootWidth > 0) { fresh.put("TTR_GL_MIN_WIDTH", String.valueOf(TtrViewport.rootWidth)); fresh.put("TTR_GL_MIN_HEIGHT", String.valueOf(TtrViewport.renderHeight)); }
                     server = launch(c, fresh, new File(c.getCacheDir(), "wine.log"), new File(TtrWineRuntime.loader(c).getParentFile(), "wineserver").getAbsolutePath(), "-p", "-f");
                     Thread.sleep(300);
