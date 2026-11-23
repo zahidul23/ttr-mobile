@@ -1,9 +1,11 @@
 package org.ttrmobile;
 
+import android.animation.ObjectAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
@@ -33,11 +35,20 @@ public final class TtrTouchControls extends FrameLayout {
     private boolean cursorMode;
     private int gamePointer = -1;
     private Joystick joystick;
-    /** Landscape: the small button right of Keyboard that tucks these controls away and brings them back. */
+    /** Landscape: the small button that tucks these controls away and brings them back; it can be dragged along the free screen edges. */
     private final Tuck tuck;
-    /** Controls that tuck away; Keyboard, the Tap/Cursor switch and Groups always stay. */
+    /** Game-play controls tuck away first; Keyboard, the Tap/Cursor switch and Groups follow them at the next tap. */
     private static final Set<String> TUCKED = new HashSet<>(Arrays.asList("Move", "Jump", "Throw", "Map", "Gags", "Tasks", "Camera"));
-    private boolean tucked, controller;
+    private static final Set<String> TUCKED_ALL = new HashSet<>(Arrays.asList("Keyboard", "Pointer", "Groups"));
+    /** How far the controls are tucked away: everything out, game-play controls in, or everything in. Cycles on each tap. */
+    private static final int OUT = 0, PLAY = 1, ALL = 2;
+    /** The Controls button fades while anything is tucked away, so it sits quietly over the game but can still be tapped. */
+    private static final float[] TUCK_ALPHA = {1, .45f, .45f};
+    private ObjectAnimator tuckFade;
+    /** The landing strips' shape, made when a drag starts. */
+    private Path stripOutline;
+    private int tucked;
+    private boolean controller;
     /** Button backgrounds are see-through so the game shows behind them; labels stay opaque. */
     private static final int FILL_ALPHA = 0x70;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -49,7 +60,7 @@ public final class TtrTouchControls extends FrameLayout {
         View keyboard = new KeyboardIcon(); keyboard.setTag("Keyboard"); keyboard.setContentDescription("Keyboard");
         keyboard.setOnClickListener(v -> { tick(v); output.keyboard(); }); addView(keyboard, new LayoutParams(1, 1));
         button("Camera", "KEY_TAB", 0xb5476a8c); // Tab cycles TTR's camera angles
-        tuck = new Tuck(); tuck.setOnClickListener(v -> { tick(v); tucked = !tucked; applyTuck(true); }); addView(tuck, new LayoutParams(1, 1));
+        tuck = new Tuck(); tuck.setOnClickListener(v -> { tick(v); tucked = (tucked + 1) % 3; applyTuck(true); }); addView(tuck, new LayoutParams(1, 1));
     }
     /** A connected gamepad (or a handheld's built-in controls) tucks the landscape controls away; removing it brings them back. */
     static boolean controllerConnected() {
@@ -68,13 +79,13 @@ public final class TtrTouchControls extends FrameLayout {
     };
     private void controllersChanged() {
         boolean now = controllerConnected(); if (now == controller) return;
-        controller = tucked = now; applyTuck(isShown());
+        controller = now; tucked = now ? PLAY : OUT; applyTuck(isShown());
     }
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         InputManager im = (InputManager) getContext().getSystemService(Context.INPUT_SERVICE);
         if (im != null) im.registerInputDeviceListener(devices, getHandler());
-        controller = tucked = controllerConnected(); post(() -> applyTuck(false));
+        controller = controllerConnected(); tucked = controller ? PLAY : OUT; post(() -> applyTuck(false));
     }
     @Override protected void onDetachedFromWindow() {
         InputManager im = (InputManager) getContext().getSystemService(Context.INPUT_SERVICE);
@@ -88,33 +99,40 @@ public final class TtrTouchControls extends FrameLayout {
      */
     private void applyTuck(boolean animate) {
         int w = getWidth(), h = getHeight(); if (w < 1 || h < 1) return;
-        boolean landscape = w > h, hide = tucked && landscape;
-        tuck.setVisibility(landscape ? VISIBLE : GONE); tuck.tucked = hide; tuck.invalidate();
-        tuck.setContentDescription(hide ? "Show touch controls" : "Hide touch controls");
+        if (!animate) tuck.letGo(); // the screen changed under a drag
+        boolean landscape = w > h; int level = landscape ? tucked : OUT;
+        tuck.setVisibility(landscape ? VISIBLE : GONE); tuck.level = level; tuck.invalidate();
+        tuck.setContentDescription(level == OUT ? "Hide touch controls" : level == PLAY ? "Hide all touch controls" : "Show touch controls");
+        if (tuckFade != null) tuckFade.cancel();
+        if (animate) { tuckFade = ObjectAnimator.ofFloat(tuck, View.ALPHA, TUCK_ALPHA[level]).setDuration(300); tuckFade.start(); } else tuck.setAlpha(TUCK_ALPHA[level]);
         float tx = tuck.getLeft() + tuck.getWidth() / 2f, ty = tuck.getTop() + tuck.getHeight() / 2f;
         float density = getResources().getDisplayMetrics().density;
-        List<View> views = new ArrayList<>(); List<float[]> centres = new ArrayList<>();
+        List<View> views = new ArrayList<>(); List<float[]> centres = new ArrayList<>(); List<Boolean> hides = new ArrayList<>();
         for (int i = 0; i < getChildCount(); i++) {
-            View v = getChildAt(i); if (!TUCKED.contains(String.valueOf(v.getTag()))) continue;
+            View v = getChildAt(i); String tag = String.valueOf(v.getTag());
+            boolean play = TUCKED.contains(tag); if (!play && !TUCKED_ALL.contains(tag)) continue;
+            boolean hide = level == ALL || (level == PLAY && play);
+            // Already tucked away: nothing to fly in (and the ones that do move go first).
+            if (animate && hide && v.getVisibility() != VISIBLE) continue;
             float[] c;
             if (v == joystick) { int[] j = TtrControlLayout.joystick(w, h, density); c = new float[]{j[0], j[1]}; }
             else c = new float[]{v.getLeft() + v.getWidth() / 2f, v.getTop() + v.getHeight() / 2f};
-            views.add(v); centres.add(c);
+            views.add(v); centres.add(c); hides.add(hide);
         }
         Integer[] order = new Integer[views.size()]; for (int i = 0; i < order.length; i++) order[i] = i;
         Arrays.sort(order, (a, b) -> Float.compare(distance(centres.get(a), tx, ty), distance(centres.get(b), tx, ty)));
-        long now = android.os.SystemClock.uptimeMillis();
+        long now = android.os.SystemClock.uptimeMillis(), landed = -1;
         for (int rank = 0; rank < order.length; rank++) {
-            View v = views.get(order[rank]); float[] c = centres.get(order[rank]);
+            View v = views.get(order[rank]); float[] c = centres.get(order[rank]); boolean hide = hides.get(order[rank]);
             float dx = tx - c[0], dy = ty - c[1];
             v.animate().cancel(); v.setPivotX(c[0] - v.getLeft()); v.setPivotY(c[1] - v.getTop());
             if (hide) {
                 // Let go of anything held there (a finger on Jump, the joystick mid-move).
                 MotionEvent cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0, 0, 0); v.dispatchTouchEvent(cancel); cancel.recycle();
                 if (!animate || v.getVisibility() != VISIBLE) { v.setVisibility(INVISIBLE); settle(v); continue; }
-                boolean last = rank == order.length - 1;
+                landed = Math.max(landed, rank * 28L + 230);
                 v.animate().translationX(dx).translationY(dy).scaleX(.06f).scaleY(.06f).alpha(0).setStartDelay(rank * 28L).setDuration(230)
-                    .setInterpolator(new AccelerateInterpolator(1.3f)).withEndAction(() -> { v.setVisibility(INVISIBLE); settle(v); if (last) pop(); });
+                    .setInterpolator(new AccelerateInterpolator(1.3f)).withEndAction(() -> { v.setVisibility(INVISIBLE); settle(v); });
             } else {
                 if (!animate) { v.setVisibility(VISIBLE); settle(v); continue; }
                 if (v.getVisibility() != VISIBLE) { v.setTranslationX(dx); v.setTranslationY(dy); v.setScaleX(.06f); v.setScaleY(.06f); v.setAlpha(0); v.setVisibility(VISIBLE); }
@@ -122,27 +140,28 @@ public final class TtrTouchControls extends FrameLayout {
                     .setInterpolator(new OvershootInterpolator(1.1f)).withEndAction(null);
             }
         }
-        if (animate && !hide) pop();
+        if (animate) { removeCallbacks(pop); if (landed >= 0) postDelayed(pop, landed); else pop.run(); }
     }
     private static float distance(float[] c, float x, float y) { return (float) Math.hypot(c[0] - x, c[1] - y); }
     private static void settle(View v) { v.setTranslationX(0); v.setTranslationY(0); v.setScaleX(1); v.setScaleY(1); v.setAlpha(1); }
     /** A small bounce of the Controls button as the controls land in it or leave it. */
-    private void pop() {
-        tuck.animate().cancel();
-        tuck.animate().scaleX(1.18f).scaleY(1.18f).setStartDelay(0).setDuration(90).setInterpolator(null)
-            .withEndAction(() -> tuck.animate().scaleX(1).scaleY(1).setDuration(160).setInterpolator(new OvershootInterpolator(2f)).withEndAction(null));
-    }
+    private final Runnable pop = () -> {
+        Tuck t = TtrTouchControls.this.tuck; if (t.dragging) return;
+        t.animate().cancel();
+        t.animate().translationX(0).translationY(0).scaleX(1.18f).scaleY(1.18f).setStartDelay(0).setDuration(90).setInterpolator(null)
+            .withEndAction(() -> t.animate().scaleX(1).scaleY(1).setDuration(160).setInterpolator(new OvershootInterpolator(2f)).withEndAction(null));
+    };
     /** Windows input mode is provided by the runtime; Linux keeps its own input. */
     public void addPointerToggle(Runnable toggle,boolean cursorMode){
         pointerToggle=new ModeSwitch();pointerToggle.setOnClickListener(v->{tick(v);toggle.run();});setCursorMode(cursorMode);
-        addView(pointerToggle,new LayoutParams(1,1));
+        addView(pointerToggle,new LayoutParams(1,1));tuck.bringToFront(); // stays on top as it is dragged past
     }
     /** Windows: a Groups button that opens ToonHQ's group finder. */
     public void addGroupsButton(Runnable open){
         TextView b=new TextView(getContext());b.setTag("Groups");b.setText("Groups");b.setContentDescription("ToonHQ groups");
         b.setTextColor(Color.WHITE);b.setTextSize(13);b.setTypeface(null,Typeface.BOLD);b.setGravity(Gravity.CENTER);b.setSingleLine(true);
         b.setBackground(pill(0xb5705ca0));b.setClickable(true);b.setOnClickListener(v->{tick(v);open.run();});
-        addView(b,new LayoutParams(1,1));
+        addView(b,new LayoutParams(1,1));tuck.bringToFront();
     }
     public void setCursorMode(boolean cursorMode){
         this.cursorMode=cursorMode;
@@ -215,19 +234,42 @@ public final class TtrTouchControls extends FrameLayout {
         int w=MeasureSpec.getSize(widthSpec), h=MeasureSpec.getSize(heightSpec);
         setMeasuredDimension(w,h);
         for(int i=0;i<getChildCount();i++) {
-            View child=getChildAt(i); int[] b=TtrControlLayout.bounds(String.valueOf(child.getTag()),w,h,getResources().getDisplayMetrics().density);
+            View child=getChildAt(i); int[] b=bounds(child,w,h);
             child.measure(MeasureSpec.makeMeasureSpec(b[2],MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(b[3],MeasureSpec.EXACTLY));
         }
     }
     @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom) {
         for(int i=0;i<getChildCount();i++) {
-            View child=getChildAt(i); int[] b=TtrControlLayout.bounds(String.valueOf(child.getTag()),right-left,bottom-top,getResources().getDisplayMetrics().density);
+            View child=getChildAt(i); int[] b=bounds(child,right-left,bottom-top);
             child.layout(b[0],b[1],b[0]+b[2],b[1]+b[3]);
         }
+    }
+    /** The layout's place for a control; in landscape the Controls button sits where the player dropped it. */
+    private int[] bounds(View child,int w,int h) {
+        float density=getResources().getDisplayMetrics().density;
+        return child==tuck&&w>h&&tuck.placeX>=0?TtrControlLayout.controlsLanding(tuck.placeX*w,tuck.placeY*h,w,h,density):TtrControlLayout.bounds(String.valueOf(child.getTag()),w,h,density);
     }
     @Override protected void onDraw(Canvas canvas) {
         if (getHeight() > getWidth()) { paint.setStyle(Paint.Style.FILL); paint.setColor(0xff102c3a); canvas.drawRect(0, TtrControlLayout.gameHeight(getWidth(), getHeight()), getWidth(), getHeight(), paint); }
         super.onDraw(canvas);
+        if (tuck.dragging && getWidth() > getHeight()) drawStrips(canvas);
+    }
+    /** While the Controls button is dragged: the strips it can land on, and a filled circle where it would land. */
+    private void drawStrips(Canvas c) {
+        int[] at = tuck.landing(); float r = at[2] / 2f;
+        paint.setStrokeWidth(Math.max(1, dp(1)));
+        paint.setStyle(Paint.Style.FILL); paint.setColor(0x26e8f5ef); c.drawPath(stripOutline, paint);
+        paint.setStyle(Paint.Style.STROKE); paint.setColor(0x99e8f5ef); c.drawPath(stripOutline, paint);
+        paint.setStyle(Paint.Style.FILL); paint.setColor(0x802a9d8f); c.drawCircle(at[0] + r, at[1] + r, r, paint);
+    }
+    /** The strips as one shape, so a top strip and side strip read as a single bend around their corner. */
+    private Path outlineStrips() {
+        float density = getResources().getDisplayMetrics().density, size = TtrControlLayout.bounds("Controls", getWidth(), getHeight(), density)[2], r = size / 2;
+        Path all = new Path();
+        for (int[] s : TtrControlLayout.controlsStrips(getWidth(), getHeight(), density)) {
+            Path strip = new Path(); strip.addRoundRect(s[0], s[1], s[2] + size, s[3] + size, r, r, Path.Direction.CW); all.op(strip, Path.Op.UNION);
+        }
+        return all;
     }
     private GradientDrawable pill(int color) {
         GradientDrawable d = new GradientDrawable(); d.setCornerRadius(dp(40)); d.setColor(color & 0xffffff | FILL_ALPHA << 24);
@@ -250,18 +292,81 @@ public final class TtrTouchControls extends FrameLayout {
     }
     /**
      * Controls button: four dots in a diamond (like a controller's face buttons). Hollow while the touch controls
-     * are out; filled, on a brighter button, while they are tucked away inside it.
+     * are out; filled, on a brighter button, while the game-play controls are tucked away inside it; and with a
+     * centre dot too once Keyboard, the Tap/Cursor switch and Groups have joined them. It is fainter while anything is tucked away.
+     * A tap moves to the next step; a slide drags it, and it snaps to the nearest free edge (remembered between starts).
      */
     private final class Tuck extends View {
-        boolean tucked;
-        Tuck() { super(TtrTouchControls.this.getContext()); setTag("Controls"); setBackground(pill(0xb52a6860)); setClickable(true); }
+        int level;
+        /** Where it was dropped, its centre as a share of the width and height; -1 for its usual place. */
+        float placeX, placeY;
+        boolean dragging;
+        private boolean held;
+        private float downX, downY, baseX, baseY;
+        Tuck() {
+            super(TtrTouchControls.this.getContext()); setTag("Controls"); setBackground(pill(0xb52a6860)); setClickable(true);
+            placeX = getContext().getSharedPreferences("ttr-input", 0).getFloat("controls-x", -1);
+            placeY = getContext().getSharedPreferences("ttr-input", 0).getFloat("controls-y", -1);
+        }
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            float x = e.getRawX(), y = e.getRawY();
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    held = true; dragging = false; downX = x; downY = y; setPressed(true); break;
+                case MotionEvent.ACTION_MOVE:
+                    if (!held) break;
+                    if (!dragging && Math.hypot(x - downX, y - downY) > android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop()) {
+                        stripOutline = outlineStrips(); dragging = true; downX = x; downY = y; setPressed(false);
+                        animate().cancel(); baseX = getTranslationX(); baseY = getTranslationY();
+                        animate().scaleX(1.18f).scaleY(1.18f).setStartDelay(0).setDuration(90).setInterpolator(null).withEndAction(null);
+                    }
+                    if (dragging) {
+                        setTranslationX(Math.max(-getLeft(), Math.min(TtrTouchControls.this.getWidth() - getRight(), baseX + x - downX)));
+                        setTranslationY(Math.max(-getTop(), Math.min(TtrTouchControls.this.getHeight() - getBottom(), baseY + y - downY)));
+                        TtrTouchControls.this.invalidate();
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                    if (!held) break;
+                    held = false; setPressed(false);
+                    if (dragging) drop(); else performClick();
+                    break;
+                case MotionEvent.ACTION_CANCEL:
+                    letGo(); break;
+            }
+            return true;
+        }
+        /** The place on the strips nearest the button's centre as it is dragged. */
+        int[] landing() {
+            return TtrControlLayout.controlsLanding(getLeft() + getWidth() / 2f + getTranslationX(), getTop() + getHeight() / 2f + getTranslationY(),
+                TtrTouchControls.this.getWidth(), TtrTouchControls.this.getHeight(), getResources().getDisplayMetrics().density);
+        }
+        /** Lands on the nearest strip from wherever the finger let go. */
+        private void drop() {
+            int[] b = landing(); dragging = false;
+            float left = getLeft() + getTranslationX(), top = getTop() + getTranslationY();
+            placeX = (b[0] + b[2] / 2f) / TtrTouchControls.this.getWidth(); placeY = (b[1] + b[3] / 2f) / TtrTouchControls.this.getHeight();
+            getContext().getSharedPreferences("ttr-input", 0).edit().putFloat("controls-x", placeX).putFloat("controls-y", placeY).apply();
+            layout(b[0], b[1], b[0] + b[2], b[1] + b[3]); setTranslationX(left - b[0]); setTranslationY(top - b[1]);
+            animate().cancel();
+            animate().translationX(0).translationY(0).scaleX(1).scaleY(1).setStartDelay(0).setDuration(220).setInterpolator(new OvershootInterpolator(2f)).withEndAction(null);
+            TtrTouchControls.this.invalidate();
+        }
+        /** Abandons a touch or drag: back to its spot, nothing changed. */
+        void letGo() {
+            if (!held) return;
+            held = dragging = false; setPressed(false); animate().cancel();
+            setTranslationX(0); setTranslationY(0); setScaleX(1); setScaleY(1); TtrTouchControls.this.invalidate();
+        }
         @Override protected void onDraw(Canvas c) {
             float w = getWidth(), h = getHeight(), cx = w / 2, cy = h / 2, step = Math.min(w, h) * .2f, r = Math.min(w, h) * .085f;
-            if (tucked) { paint.setStyle(Paint.Style.FILL); paint.setColor(0x802a9d8f); c.drawCircle(cx, cy, Math.min(w, h) / 2f - dp(2), paint); }
+            boolean filled = level != OUT;
+            if (filled) { paint.setStyle(Paint.Style.FILL); paint.setColor(0x802a9d8f); c.drawCircle(cx, cy, Math.min(w, h) / 2f - dp(2), paint); }
             paint.setColor(Color.WHITE); paint.setStrokeWidth(Math.max(1, dp(1) * 1.4f));
-            paint.setStyle(tucked ? Paint.Style.FILL : Paint.Style.STROKE);
+            paint.setStyle(filled ? Paint.Style.FILL : Paint.Style.STROKE);
             c.drawCircle(cx, cy - step, r, paint); c.drawCircle(cx, cy + step, r, paint);
             c.drawCircle(cx - step, cy, r, paint); c.drawCircle(cx + step, cy, r, paint);
+            if (level == ALL) c.drawCircle(cx, cy, r, paint);
         }
     }
     /** Tap / Cursor switch: both choices are shown and the active one is filled. */
