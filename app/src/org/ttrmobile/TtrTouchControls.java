@@ -37,13 +37,14 @@ public final class TtrTouchControls extends FrameLayout {
     private Joystick joystick;
     /** Landscape: the small button that tucks these controls away and brings them back; it can be dragged along the free screen edges. */
     private final Tuck tuck;
-    /** Game-play controls tuck away first; Keyboard, the Tap/Cursor switch and Groups follow them at the next tap. */
+    /** The row above Keyboard tucks away first, then the other game-play controls; Keyboard, the Tap/Cursor switch and Groups go last. */
+    private static final Set<String> TUCKED_ROW = new HashSet<>(Arrays.asList("Map", "Gags", "Tasks", "Camera"));
     private static final Set<String> TUCKED = new HashSet<>(Arrays.asList("Move", "Jump", "Throw", "Map", "Gags", "Tasks", "Camera"));
     private static final Set<String> TUCKED_ALL = new HashSet<>(Arrays.asList("Keyboard", "Pointer", "Groups"));
-    /** How far the controls are tucked away: everything out, game-play controls in, or everything in. Cycles on each tap. */
-    private static final int OUT = 0, PLAY = 1, ALL = 2;
+    /** How far the controls are tucked away: everything out, the row in, game-play controls in, or everything in. Cycles on each tap. */
+    private static final int OUT = 0, ROW = 1, PLAY = 2, ALL = 3;
     /** The Controls button fades while anything is tucked away, so it sits quietly over the game but can still be tapped. */
-    private static final float[] TUCK_ALPHA = {1, .45f, .45f};
+    private static final float[] TUCK_ALPHA = {1, .45f, .45f, .45f};
     private ObjectAnimator tuckFade;
     /** The landing strips' shape, made when a drag starts. */
     private Path stripOutline;
@@ -60,7 +61,7 @@ public final class TtrTouchControls extends FrameLayout {
         View keyboard = new KeyboardIcon(); keyboard.setTag("Keyboard"); keyboard.setContentDescription("Keyboard");
         keyboard.setOnClickListener(v -> { tick(v); output.keyboard(); }); addView(keyboard, new LayoutParams(1, 1));
         button("Camera", "KEY_TAB", 0xb5476a8c); // Tab cycles TTR's camera angles
-        tuck = new Tuck(); tuck.setOnClickListener(v -> { tick(v); tucked = (tucked + 1) % 3; applyTuck(true); }); addView(tuck, new LayoutParams(1, 1));
+        tuck = new Tuck(); tuck.setOnClickListener(v -> { tick(v); tucked = (tucked + 1) % TUCK_ALPHA.length; applyTuck(true); }); addView(tuck, new LayoutParams(1, 1));
     }
     /** A connected gamepad (or a handheld's built-in controls) tucks the landscape controls away; removing it brings them back. */
     static boolean controllerConnected() {
@@ -102,7 +103,7 @@ public final class TtrTouchControls extends FrameLayout {
         if (!animate) tuck.letGo(); // the screen changed under a drag
         boolean landscape = w > h; int level = landscape ? tucked : OUT;
         tuck.setVisibility(landscape ? VISIBLE : GONE); tuck.level = level; tuck.invalidate();
-        tuck.setContentDescription(level == OUT ? "Hide touch controls" : level == PLAY ? "Hide all touch controls" : "Show touch controls");
+        tuck.setContentDescription(level == OUT ? "Hide button row" : level == ROW ? "Hide touch controls" : level == PLAY ? "Hide all touch controls" : "Show touch controls");
         if (tuckFade != null) tuckFade.cancel();
         if (animate) { tuckFade = ObjectAnimator.ofFloat(tuck, View.ALPHA, TUCK_ALPHA[level]).setDuration(300); tuckFade.start(); } else tuck.setAlpha(TUCK_ALPHA[level]);
         float tx = tuck.getLeft() + tuck.getWidth() / 2f, ty = tuck.getTop() + tuck.getHeight() / 2f;
@@ -111,7 +112,7 @@ public final class TtrTouchControls extends FrameLayout {
         for (int i = 0; i < getChildCount(); i++) {
             View v = getChildAt(i); String tag = String.valueOf(v.getTag());
             boolean play = TUCKED.contains(tag); if (!play && !TUCKED_ALL.contains(tag)) continue;
-            boolean hide = level == ALL || (level == PLAY && play);
+            boolean hide = level == ALL || (level == PLAY && play) || (level == ROW && TUCKED_ROW.contains(tag));
             // Already tucked away: nothing to fly in (and the ones that do move go first).
             if (animate && hide && v.getVisibility() != VISIBLE) continue;
             float[] c;
@@ -292,8 +293,9 @@ public final class TtrTouchControls extends FrameLayout {
     }
     /**
      * Controls button: four dots in a diamond (like a controller's face buttons). Hollow while the touch controls
-     * are out; filled, on a brighter button, while the game-play controls are tucked away inside it; and with a
-     * centre dot too once Keyboard, the Tap/Cursor switch and Groups have joined them. It is fainter while anything is tucked away.
+     * are out; half filled, on a brighter button, while the row above Keyboard is tucked away; filled while the
+     * game-play controls are; and with a centre dot too once Keyboard, the Tap/Cursor switch and Groups have joined them.
+     * It is fainter while anything is tucked away.
      * A tap moves to the next step; a slide drags it, and it snaps to the nearest free edge (remembered between starts).
      */
     private final class Tuck extends View {
@@ -360,13 +362,16 @@ public final class TtrTouchControls extends FrameLayout {
         }
         @Override protected void onDraw(Canvas c) {
             float w = getWidth(), h = getHeight(), cx = w / 2, cy = h / 2, step = Math.min(w, h) * .2f, r = Math.min(w, h) * .085f;
-            boolean filled = level != OUT;
-            if (filled) { paint.setStyle(Paint.Style.FILL); paint.setColor(0x802a9d8f); c.drawCircle(cx, cy, Math.min(w, h) / 2f - dp(2), paint); }
+            if (level != OUT) { paint.setStyle(Paint.Style.FILL); paint.setColor(0x802a9d8f); c.drawCircle(cx, cy, Math.min(w, h) / 2f - dp(2), paint); }
             paint.setColor(Color.WHITE); paint.setStrokeWidth(Math.max(1, dp(1) * 1.4f));
-            paint.setStyle(filled ? Paint.Style.FILL : Paint.Style.STROKE);
+            paint.setStyle(level >= PLAY ? Paint.Style.FILL : Paint.Style.STROKE);
+            dots(c, cx, cy, step, r);
+            if (level == ROW) { c.save(); c.clipRect(0, cy, w, h); paint.setStyle(Paint.Style.FILL); dots(c, cx, cy, step, r); c.restore(); }
+            if (level == ALL) c.drawCircle(cx, cy, r, paint);
+        }
+        private void dots(Canvas c, float cx, float cy, float step, float r) {
             c.drawCircle(cx, cy - step, r, paint); c.drawCircle(cx, cy + step, r, paint);
             c.drawCircle(cx - step, cy, r, paint); c.drawCircle(cx + step, cy, r, paint);
-            if (level == ALL) c.drawCircle(cx, cy, r, paint);
         }
     }
     /** Tap / Cursor switch: both choices are shown and the active one is filled. */
