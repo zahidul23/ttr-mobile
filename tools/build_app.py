@@ -15,7 +15,7 @@ from pathlib import Path
 from common import ROOT, TOOLS, NDK_BIN, find, run
 
 BUILD = ROOT / 'build/app'
-VERSION = '0.8.6'
+VERSION = '0.8.7'
 FEX_DEB = 'fex-emu-wine_2610-1~n_arm64.deb'
 FEX_SHA256 = 'edd6a8266f82199b1323549d64d75295b44773330dc61a44e3e5d9529bd100ba'
 PACKAGE = 'help.toontown.ttrmobile'
